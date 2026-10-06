@@ -248,15 +248,23 @@ func (c *CloudClient) RawGet(apiURI string) (map[string]interface{}, error) {
 	return resp, nil
 }
 
-// GetDeviceDailyStatistics mengambil statistik harian (kWh per hari) dari layanan Data Statistics Tuya.
-// startDay/endDay berformat yyyyMMdd.
-func (c *CloudClient) GetDeviceDailyStatistics(code, startDay, endDay string) (map[string]interface{}, error) {
-	uri := fmt.Sprintf("/v1.0/devices/%s/statistics/days?code=%s&start_day=%s&end_day=%s", c.DeviceID, code, startDay, endDay)
-	return c.RawGet(uri)
+// GetDeviceStatus mengambil status realtime langsung dari perangkat (termasuk shared device)
+func (c *CloudClient) GetDeviceStatus() ([]map[string]interface{}, error) {
+	uri := fmt.Sprintf("/v1.0/devices/%s/status", c.DeviceID)
+	resp, err := c.RawGet(uri)
+	if err != nil {
+		return nil, err
+	}
+	resSlice, ok := resp["result"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("format respons status tidak valid")
+	}
+	var out []map[string]interface{}
+	for _, item := range resSlice {
+		if m, ok := item.(map[string]interface{}); ok {
+			out = append(out, m)
+		}
+	}
+	return out, nil
 }
 
-// GetDeviceHourlyStatistics mengambil statistik per jam. startHour/endHour berformat yyyyMMddHH.
-func (c *CloudClient) GetDeviceHourlyStatistics(code, startHour, endHour string) (map[string]interface{}, error) {
-	uri := fmt.Sprintf("/v1.0/devices/%s/statistics/hours?code=%s&start_hour=%s&end_hour=%s", c.DeviceID, code, startHour, endHour)
-	return c.RawGet(uri)
-}

@@ -1841,6 +1841,21 @@ func main() {
 				if devPower <= 0 && pWatt > 0 {
 					devPower = int(math.Round(pWatt))
 				}
+			} else {
+				// Fallback untuk perangkat yang dishare ke akun (Direct Query via Device ID)
+				singleClient := tuya.NewCloudClient(devID, tuyaAccessID, tuyaAccessKey, tuyaEndpoint)
+				if details, errDet := singleClient.GetDeviceDetails(); errDet == nil && details != nil {
+					cPower, cStatus, cName, fetched := extractTuyaDevicePowerAndInfo(details)
+					if fetched {
+						devStatus = cStatus
+						if devName == "" && cName != "" {
+							devName = cName
+						}
+						if devPower <= 0 && cPower > 0 {
+							devPower = cPower
+						}
+					}
+				}
 			}
 
 			if devName == "" {
