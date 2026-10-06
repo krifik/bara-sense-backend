@@ -20,7 +20,7 @@ RUN npm run build
 # ------------------------------------------
 # Stage 2: Build Backend (Go on Debian Bookworm)
 # ------------------------------------------
-FROM golang:1.24-bookworm AS backend-builder
+FROM golang:1.26-bookworm AS backend-builder
 WORKDIR /app/backend
 
 # Install git & certificates jika diperlukan modul eksternal
