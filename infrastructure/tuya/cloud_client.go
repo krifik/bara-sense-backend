@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/tuya/tuya-connector-go/connector"
 	"github.com/tuya/tuya-connector-go/connector/env"
@@ -86,9 +89,35 @@ func (c *CloudClient) GetDeviceDetails() (interface{}, error) {
 	return resp, nil
 }
 
-// GetCloudDevices fetches devices linked to the Tuya project
+var (
+	cloudDevicesCache     interface{}
+	cloudDevicesCacheTime time.Time
+	cloudDevicesMutex     sync.Mutex
+	quotaExhaustedUntil   time.Time
+)
+
+// GetCloudDevices fetches devices linked to the Tuya project with caching and quota protection
 func (c *CloudClient) GetCloudDevices() (interface{}, error) {
-	log.Println("Fetching associated devices from Tuya Cloud...")
+	cloudDevicesMutex.Lock()
+	defer cloudDevicesMutex.Unlock()
+
+	now := time.Now()
+
+	// 1. Circuit Breaker: Jika Tuya pernah mengembalikan pesan quota exhausted,
+	// tahan pemanggilan API selama 5 menit agar tidak membanjiri request percuma
+	if now.Before(quotaExhaustedUntil) {
+		if cloudDevicesCache != nil {
+			return cloudDevicesCache, nil
+		}
+		return nil, fmt.Errorf("Tuya API quota exhausted, cool down aktif hingga %s", quotaExhaustedUntil.Format("15:04:05"))
+	}
+
+	// 2. TTL Cache: Berikan data cache jika request dilakukan dalam kurun 15 detik
+	if cloudDevicesCache != nil && now.Sub(cloudDevicesCacheTime) < 15*time.Second {
+		return cloudDevicesCache, nil
+	}
+
+	log.Println("Fetching associated devices from Tuya Cloud (cached/throttled)...")
 
 	var resp interface{}
 	apiURI := "/v1.0/iot-01/associated-users/devices"
@@ -102,6 +131,24 @@ func (c *CloudClient) GetCloudDevices() (interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch devices from Tuya Cloud: %v", err)
 	}
+
+	// Cek apakah response memuat kode quota exhausted (misal 28841004)
+	if resp != nil {
+		if b, errM := json.Marshal(resp); errM == nil {
+			respStr := string(b)
+			if strings.Contains(respStr, "28841004") || strings.Contains(respStr, "quota is exhausted") {
+				quotaExhaustedUntil = now.Add(5 * time.Minute)
+				log.Println("[TUYA QUOTA PROTECTION] Quota trial Tuya Cloud habis. Mengaktifkan cooldown 5 menit.")
+				if cloudDevicesCache != nil {
+					return cloudDevicesCache, nil
+				}
+				return resp, nil
+			}
+		}
+	}
+
+	cloudDevicesCache = resp
+	cloudDevicesCacheTime = now
 	return resp, nil
 }
 

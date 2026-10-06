@@ -1088,9 +1088,9 @@ func main() {
 	// Sinkronisasi otomatis riwayat energi dari log laporan Tuya Cloud (setiap 10 menit)
 	startTuyaHistoryAutoSync(dbConn, wsHub, tuyaAccessID, tuyaAccessKey, tuyaEndpoint)
 
-	// Sinkronisasi Telemetri Daya Realtime dari Tuya Cloud Setiap 1.5 Detik
+	// Sinkronisasi Telemetri Daya Realtime dari Tuya Cloud Setiap 30 Detik (Dioptimalkan agar kuota API Tuya tidak exhausted)
 	go func() {
-		ticker := time.NewTicker(1500 * time.Millisecond)
+		ticker := time.NewTicker(30 * time.Second)
 		client := tuya.NewCloudClient("", tuyaAccessID, tuyaAccessKey, tuyaEndpoint)
 		for range ticker.C {
 			if tuyaAccessID != "" && tuyaAccessKey != "" {
