@@ -1,0 +1,26 @@
+# Git & temp files
+.git
+.gitignore
+.agents
+.gemini
+
+# Frontend dependencies & build cache
+frontend/node_modules
+frontend/.vite
+frontend/dist
+
+# Backend local builds & databases
+backend/server.exe
+backend/server
+backend/logs/*.log
+logs/*.log
+*.db
+*.db-journal
+*.exe
+*.vbs
+*.bat
+
+# Docker & local temp
+.dockerignore
+Dockerfile
+docker-compose*.yml

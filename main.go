@@ -1085,51 +1085,13 @@ func main() {
 	// Mulai Proteksi Anti-Jeglek PLN (Smart Load Shedding & Ceiling Guard)
 	startPowerGuardWorker(dbConn, wsHub, tuyaAccessID, tuyaAccessKey, tuyaEndpoint)
 
-	// Sinkronisasi otomatis riwayat energi dari log laporan Tuya Cloud (setiap 10 menit)
-	startTuyaHistoryAutoSync(dbConn, wsHub, tuyaAccessID, tuyaAccessKey, tuyaEndpoint)
-
-	// Sinkronisasi Telemetri Daya Realtime dari Tuya Cloud Setiap 30 Detik (Dioptimalkan agar kuota API Tuya tidak exhausted)
+	// CATATAN: Sinkronisasi Tuya Cloud (GetCloudDevices & History Sync) TIDAK dijalankan secara berkala
+	// di background loop agar kuota API Tuya Cloud tidak terbuang / exhausted.
+	// Tuya Cloud hanya diakses saat pengguna secara manual mengklik tombol "Pindai Perangkat" (/api/scan)
+	// atau "Sinkronkan Riwayat" (/api/energy/sync-tuya).
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		client := tuya.NewCloudClient("", tuyaAccessID, tuyaAccessKey, tuyaEndpoint)
+		ticker := time.NewTicker(3 * time.Second)
 		for range ticker.C {
-			if tuyaAccessID != "" && tuyaAccessKey != "" {
-				cloudResp, err := client.GetCloudDevices()
-				if err == nil && cloudResp != nil {
-					b, errM := json.Marshal(cloudResp)
-					if errM == nil {
-						var tResp TuyaCloudResponse
-						if errU := json.Unmarshal(b, &tResp); errU == nil && tResp.Success {
-							for _, cDev := range tResp.Result.Devices {
-								status, pWatt, _, _, _ := parseCloudDeviceTelemetry(cDev)
-								pInt := int(math.Round(pWatt))
-								devName := cDev.Name
-								if devName == "" {
-									devName = "Perangkat " + cDev.ID
-								}
-								_, _ = dbConn.Exec(`
-									INSERT INTO devices (id, name, status, power, priority, allowed_roles) 
-									VALUES ($1, $2, $3, $4, 2, 'admin,operator,viewer') 
-									ON CONFLICT (id) DO UPDATE SET 
-										status = EXCLUDED.status, 
-										power = EXCLUDED.power,
-										name = CASE WHEN devices.name IS NULL OR devices.name = '' OR devices.name LIKE 'Perangkat %' THEN EXCLUDED.name ELSE devices.name END
-								`, cDev.ID, devName, status, pInt)
-
-								// Perangkat dengan chip energi (add_ele) dicatat dari log laporan Tuya Cloud
-								// oleh startTuyaHistoryAutoSync agar data lokal identik dengan Tuya.
-								if !deviceHasEnergyMeter(cDev) && status && pInt > 0 {
-									// Fallback estimasi untuk perangkat yang tidak memiliki chip energy meter
-									kwh := (pWatt * 0.001) / 3600.0 * 1.5
-									cost := kwh * 1444.70
-									_, _ = dbConn.Exec("INSERT INTO energy_logs (device_id, power_watt, kwh, cost_idr) VALUES ($1, $2, $3, $4)", cDev.ID, pInt, kwh, cost)
-								}
-							}
-						}
-					}
-				}
-			}
-
 			// Pastikan perangkat yang status = false tidak memiliki power sisa di database
 			_, _ = dbConn.Exec("UPDATE devices SET power = 0 WHERE status = false")
 
