@@ -759,7 +759,11 @@ func executeDeviceToggle(dbConn *sql.DB, wsHub *WsHub, tuyaAccessID, tuyaAccessK
 			"value": targetStatus,
 		},
 	}
-	_ = client.SendCommand(commands)
+	errCmd := client.SendCommand(commands)
+	if errCmd != nil {
+		log.Printf("[TOGGLE ERROR] Gagal mengirim perintah toggle ke Tuya Cloud (%s): %v", deviceID, errCmd)
+		return errCmd
+	}
 
 	if !targetStatus {
 		// Ketika saklar dimatikan, konsumsi daya seketika menjadi 0 Watt secara realtime

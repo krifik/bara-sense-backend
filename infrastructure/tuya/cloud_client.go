@@ -42,7 +42,7 @@ func NewCloudClient(deviceID, accessID, accessKey, apiEndpoint string) *CloudCli
 
 // SendCommand sends a command to the Tuya device using the Tuya Cloud API
 func (c *CloudClient) SendCommand(commands []map[string]interface{}) error {
-	log.Printf("Connecting to Tuya Cloud for device %s...", c.DeviceID)
+	log.Printf("Connecting to Tuya Cloud for device %s (commands: %+v)...", c.DeviceID, commands)
 
 	payload := map[string]interface{}{
 		"commands": commands,
@@ -53,18 +53,37 @@ func (c *CloudClient) SendCommand(commands []map[string]interface{}) error {
 		return fmt.Errorf("failed to marshal command payload: %v", err)
 	}
 
-	resp := &struct{}{}
+	var resp interface{}
 	apiURI := fmt.Sprintf("/v1.0/devices/%s/commands", c.DeviceID)
-	
+
 	err = connector.MakePostRequest(
 		context.Background(),
 		connector.WithAPIUri(apiURI),
 		connector.WithPayload(payloadBytes),
-		connector.WithResp(resp),
+		connector.WithResp(&resp),
 	)
 
 	if err != nil {
+		log.Printf("[tuya-cloud ERROR] failed to send command to device %s: %v", c.DeviceID, err)
 		return fmt.Errorf("failed to send command to Tuya Cloud: %v", err)
+	}
+
+	bResp, _ := json.Marshal(resp)
+	log.Printf("[tuya-cloud] Command response for %s: %s", c.DeviceID, string(bResp))
+
+	// Cek apakah response memuat success=false
+	if resp != nil {
+		var tResp struct {
+			Success bool   `json:"success"`
+			Code    int    `json:"code"`
+			Msg     string `json:"msg"`
+		}
+		if errU := json.Unmarshal(bResp, &tResp); errU == nil {
+			if !tResp.Success && tResp.Code != 0 {
+				log.Printf("[tuya-cloud ERROR] Tuya API menolak perintah switch (%d: %s)", tResp.Code, tResp.Msg)
+				return fmt.Errorf("Tuya Cloud API error %d: %s", tResp.Code, tResp.Msg)
+			}
+		}
 	}
 
 	log.Println("[tuya-cloud] Command successfully sent to device.")
@@ -77,7 +96,7 @@ func (c *CloudClient) GetDeviceDetails() (interface{}, error) {
 
 	var resp interface{}
 	apiURI := fmt.Sprintf("/v1.0/devices/%s", c.DeviceID)
-	
+
 	err := connector.MakeGetRequest(
 		context.Background(),
 		connector.WithAPIUri(apiURI),
@@ -88,6 +107,8 @@ func (c *CloudClient) GetDeviceDetails() (interface{}, error) {
 		return nil, fmt.Errorf("failed to get device details: %v", err)
 	}
 
+	bResp, _ := json.Marshal(resp)
+	log.Printf("[tuya-cloud] Device details response for %s: %s", c.DeviceID, string(bResp))
 	return resp, nil
 }
 
