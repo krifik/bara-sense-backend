@@ -1692,44 +1692,10 @@ func main() {
 			}
 		}
 
-		client := tuya.NewCloudClient("", tuyaAccessID, tuyaAccessKey, tuyaEndpoint)
-		cloudDevs, _ := client.GetCloudDevices()
-
-		// Sinkronisasi realtime telemetri aktual dari Tuya Cloud
-		if cloudDevs != nil {
-			if b, errM := json.Marshal(cloudDevs); errM == nil {
-				var tResp TuyaCloudResponse
-				if errU := json.Unmarshal(b, &tResp); errU == nil && tResp.Success {
-					cloudMap := make(map[string]TuyaCloudDeviceItem)
-					for _, cd := range tResp.Result.Devices {
-						cloudMap[cd.ID] = cd
-					}
-
-					for i := range devices {
-						if cd, ok := cloudMap[devices[i].ID]; ok {
-							cStatus, pWatt, cVolt, cCurr, _ := parseCloudDeviceTelemetry(cd)
-							devices[i].Status = cStatus
-							devices[i].Power = int(math.Round(pWatt))
-							devices[i].VoltageVolts = cVolt
-							devices[i].CurrentAmps = cCurr
-
-							// Update database agar nilai selalu sinkron dengan konsumsi realtime
-							_, _ = dbConn.Exec("UPDATE devices SET status = $1, power = $2 WHERE id = $3", cStatus, devices[i].Power, devices[i].ID)
-						} else if !devices[i].Status {
-							devices[i].Power = 0
-							devices[i].VoltageVolts = 0.0
-							devices[i].CurrentAmps = 0.0
-						}
-					}
-				}
-			}
-		}
-
 		return c.JSON(fiber.Map{
 			"status":        "success",
 			"total":         len(devices),
 			"local_devices": devices,
-			"cloud_devices": cloudDevs,
 		})
 	})
 

@@ -132,17 +132,19 @@ func (c *CloudClient) GetCloudDevices() (interface{}, error) {
 		return nil, fmt.Errorf("failed to fetch devices from Tuya Cloud: %v", err)
 	}
 
-	// Cek apakah response memuat kode quota exhausted (misal 28841004)
+	// Cek apakah response memuat kode error Tuya Cloud (misal 28841004 quota exhausted atau 28841107 data center suspended)
 	if resp != nil {
 		if b, errM := json.Marshal(resp); errM == nil {
 			respStr := string(b)
-			if strings.Contains(respStr, "28841004") || strings.Contains(respStr, "quota is exhausted") {
-				quotaExhaustedUntil = now.Add(5 * time.Minute)
-				log.Println("[TUYA QUOTA PROTECTION] Quota trial Tuya Cloud habis. Mengaktifkan cooldown 5 menit.")
+			if strings.Contains(respStr, "28841004") || strings.Contains(respStr, "quota is exhausted") ||
+				strings.Contains(respStr, "28841107") || strings.Contains(respStr, "data center is suspended") {
+				quotaExhaustedUntil = now.Add(10 * time.Minute)
+				log.Println("[TUYA QUOTA PROTECTION] Tuya Cloud API dibatasi (quota exhausted / suspended). Mengaktifkan cooldown 10 menit.")
 				if cloudDevicesCache != nil {
 					return cloudDevicesCache, nil
 				}
-				return resp, nil
+				// Jangan return error payload sebagai objek devices valid
+				return nil, fmt.Errorf("Tuya Cloud API sedang dibatasi: %s", respStr)
 			}
 		}
 	}
