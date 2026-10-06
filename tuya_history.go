@@ -82,6 +82,9 @@ func deviceHasEnergyMeter(dev TuyaCloudDeviceItem) bool {
 
 // fetchTuyaCloudDeviceList mengambil daftar perangkat beserta status DP dari Tuya Cloud.
 func fetchTuyaCloudDeviceList(accessID, accessKey, endpoint string) ([]TuyaCloudDeviceItem, error) {
+	if accessID == "" || accessKey == "" {
+		return nil, fmt.Errorf("TUYA_ACCESS_ID atau TUYA_ACCESS_KEY belum dikonfigurasi di environment server (.env)")
+	}
 	client := tuya.NewCloudClient("", accessID, accessKey, endpoint)
 	cloudResp, err := client.GetCloudDevices()
 	if err != nil || cloudResp == nil {

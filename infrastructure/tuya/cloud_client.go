@@ -22,13 +22,15 @@ type CloudClient struct {
 }
 
 func NewCloudClient(deviceID, accessID, accessKey, apiEndpoint string) *CloudClient {
-	// Initialize Tuya Connector
-	connector.InitWithOptions(
-		env.WithAccessID(accessID),
-		env.WithAccessKey(accessKey),
-		env.WithApiHost(apiEndpoint),
-		env.WithMsgHost(apiEndpoint),
-	)
+	// Initialize Tuya Connector hanya jika AccessID dan AccessKey tersedia
+	if accessID != "" && accessKey != "" {
+		connector.InitWithOptions(
+			env.WithAccessID(accessID),
+			env.WithAccessKey(accessKey),
+			env.WithApiHost(apiEndpoint),
+			env.WithMsgHost(apiEndpoint),
+		)
+	}
 
 	return &CloudClient{
 		DeviceID:    deviceID,
@@ -98,6 +100,10 @@ var (
 
 // GetCloudDevices fetches devices linked to the Tuya project with caching and quota protection
 func (c *CloudClient) GetCloudDevices() (interface{}, error) {
+	if c.AccessID == "" || c.AccessKey == "" {
+		return nil, fmt.Errorf("TUYA_ACCESS_ID atau TUYA_ACCESS_KEY belum dikonfigurasi di environment (.env)")
+	}
+
 	cloudDevicesMutex.Lock()
 	defer cloudDevicesMutex.Unlock()
 
