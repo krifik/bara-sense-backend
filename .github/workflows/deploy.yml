@@ -18,4 +18,4 @@ jobs:
           port: 22
           script_stop: true
           script: |
-            /opt/deploy.sh
+            /usr/bin/bash /opt/deploy.sh
