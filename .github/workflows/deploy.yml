@@ -1,4 +1,4 @@
-name: CI/CD Auto Deploy to Server
+name: CI/CD Auto Deploy Backend
 
 on:
   push:
@@ -8,7 +8,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy to Server via SSH
+      - name: Deploy Backend to Server via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: 157.15.124.192
@@ -18,4 +18,4 @@ jobs:
           port: 22
           script_stop: true
           script: |
-            /usr/bin/bash /opt/deploy.sh
+            /usr/bin/bash /opt/deploy-backend.sh

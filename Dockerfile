@@ -1,24 +1,10 @@
 # ==========================================
-# Multi-stage Dockerfile untuk BARA-Sense
-# (Debian / Ubuntu based - Tanpa Alpine)
+# Dockerfile Backend BARA-Sense
+# (Debian Bookworm - Tanpa Alpine)
 # ==========================================
 
 # ------------------------------------------
-# Stage 1: Build Frontend (Node.js Debian Slim)
-# ------------------------------------------
-FROM node:20-bookworm-slim AS frontend-builder
-WORKDIR /app/frontend
-
-# Copy dependencies manifest
-COPY frontend/package*.json ./
-RUN npm ci
-
-# Copy source code and build production assets
-COPY frontend/ ./
-RUN npm run build
-
-# ------------------------------------------
-# Stage 2: Build Backend (Go on Debian Bookworm)
+# Stage 1: Build Backend (Go on Debian Bookworm)
 # ------------------------------------------
 FROM golang:1.26-bookworm AS backend-builder
 WORKDIR /app/backend
@@ -59,9 +45,6 @@ COPY --from=backend-builder /app/backend/server /app/server
 
 # Copy swagger docs jika ada
 COPY --from=backend-builder /app/backend/docs /app/docs/
-
-# Copy hasil build frontend dari stage frontend-builder
-COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
 # Expose default HTTP/WebSocket port
 EXPOSE 3000
