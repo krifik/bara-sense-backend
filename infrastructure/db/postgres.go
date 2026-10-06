@@ -15,7 +15,7 @@ func NewPostgresDB(connStr string) (*sql.DB, error) {
 	}
 
 	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("failed to ping Postgres database: %w", err)
+		return nil, fmt.Errorf("layanan database tidak dapat dijangkau. Periksa status dan koneksi database server")
 	}
 
 	createTablesQuery := `
