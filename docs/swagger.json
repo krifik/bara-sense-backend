@@ -1,0 +1,379 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Home Automation Tuya API",
+    "description": "REST API untuk mengelola database lokal dan mengontrol perangkat IoT secara realtime via Tuya Cloud OpenAPI.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000",
+      "description": "Local Development Server"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Devices",
+      "description": "Endpoint manajemen dan kontrol perangkat Tuya IoT"
+    },
+    {
+      "name": "WebSocket",
+      "description": "Stream WebSocket telemetri daya realtime & sync analitik"
+    }
+  ],
+  "paths": {
+    "/ws": {
+      "get": {
+        "tags": ["WebSocket"],
+        "summary": "WebSocket Realtime Power Telemetry & Analytics Stream",
+        "description": "Hubungkan koneksi WebSocket ke ws://localhost:3000/ws untuk menerima pembaruan analitik daya secara realtime dan memposting data telemetri daya dari perangkat IoT.",
+        "responses": {
+          "101": {
+            "description": "Switching Protocols (WebSocket Handshake Success)"
+          }
+        }
+      }
+    },
+    "/api/devices": {
+      "get": {
+        "tags": ["Devices"],
+        "summary": "Mendapatkan daftar perangkat realtime (Database Lokal & Tuya Cloud)",
+        "description": "Mengambil data real perangkat yang tersimpan di SQLite lokal dan juga sinkronisasi realtime dari Tuya Cloud Project.",
+        "responses": {
+          "200": {
+            "description": "Berhasil mengambil data perangkat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceListResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Gagal membaca database",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Devices"],
+        "summary": "Daftarkan / Simpan perangkat baru ke database",
+        "description": "Menyimpan ID perangkat Tuya dan nama kustom perangkat ke SQLite database lokal.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterDeviceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Perangkat berhasil didaftarkan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "success" },
+                    "message": { "type": "string", "example": "Device successfully registered" },
+                    "data": { "$ref": "#/components/schemas/RegisterDeviceRequest" }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "ID atau nama perangkat kosong",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/devices/{id}": {
+      "get": {
+        "tags": ["Devices"],
+        "summary": "Mendapatkan detail & status realtime perangkat dari Tuya Cloud",
+        "description": "Mengambil langsung status realtime (online/offline, dps, fungsi saklar) dari server Tuya Cloud menggunakan Device ID.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Device ID dari Tuya IoT Platform",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Berhasil mengambil detail dari Tuya Cloud",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceDetailResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error dari Tuya Cloud atau ID tidak ditemukan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Devices"],
+        "summary": "Hapus Perangkat dari Database",
+        "description": "Menghapus perangkat beserta riwayat penggunaan listriknya dari database SQLite lokal.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Device ID yang akan dihapus",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Perangkat berhasil dihapus",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "success" },
+                    "message": { "type": "string", "example": "Device and its usage history successfully deleted" },
+                    "device_id": { "type": "string", "example": "eb8a1b2c3d4e5f6g" }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Perangkat tidak ditemukan",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/analytics": {
+      "get": {
+        "tags": ["Analytics"],
+        "summary": "Analitik Penggunaan Listrik dan Estimasi Biaya",
+        "description": "Mendapatkan metrik daya aktif (Watt), konsumsi listrik hari ini (kWh), estimasi tagihan listrik bulanan (IDR), breakdown per perangkat, dan tren grafik.",
+        "responses": {
+          "200": {
+            "description": "Berhasil mengambil data analitik listrik",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "success" },
+                    "total_active_power_watts": { "type": "integer", "example": 1000 },
+                    "total_kwh_today": { "type": "string", "example": "8.50" },
+                    "estimated_cost_today_idr": { "type": "string", "example": "12280" },
+                    "estimated_cost_month_idr": { "type": "string", "example": "368400" },
+                    "tariff_rate_per_kwh": { "type": "number", "example": 1444.70 }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/devices/{id}/toggle": {
+      "post": {
+        "tags": ["Devices"],
+        "summary": "Kontrol Saklar ON / OFF Perangkat Real",
+        "description": "Mengirimkan instruksi perintah ke server Tuya Cloud untuk menyalakan atau mematikan perangkat target secara realtime.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Device ID dari Tuya IoT Platform",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToggleDeviceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Perintah berhasil dikirim ke perangkat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToggleDeviceResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Format request body salah",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Gagal mengirimkan perintah ke Tuya Cloud",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "RegisterDeviceRequest": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Device ID unik perangkat Tuya Anda",
+            "example": "bf1a2b3c4d5e6f7g"
+          },
+          "name": {
+            "type": "string",
+            "description": "Nama perangkat",
+            "example": "Lampu Ruang Tamu"
+          }
+        }
+      },
+      "ToggleDeviceRequest": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": {
+            "type": "boolean",
+            "description": "Kirim true untuk ON, false untuk OFF",
+            "example": true
+          }
+        }
+      },
+      "ToggleDeviceResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "success"
+          },
+          "message": {
+            "type": "string",
+            "example": "Device state updated"
+          },
+          "device_id": {
+            "type": "string",
+            "example": "bf1a2b3c4d5e6f7g"
+          },
+          "current_status": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "DeviceListResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "success"
+          },
+          "total": {
+            "type": "integer",
+            "example": 1
+          },
+          "local_devices": {
+            "type": "array",
+            "description": "Daftar perangkat yang terdaftar di SQLite",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "name": { "type": "string" },
+                "status": { "type": "boolean" },
+                "power": { "type": "integer" }
+              }
+            }
+          },
+          "cloud_devices": {
+            "type": "object",
+            "description": "Data perangkat realtime langsung dari Tuya Cloud OpenAPI"
+          }
+        }
+      },
+      "DeviceDetailResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "success"
+          },
+          "data": {
+            "type": "object",
+            "description": "Data respon asli dari Tuya Cloud OpenAPI"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "example": "Error message from server or Tuya"
+          }
+        }
+      }
+    }
+  }
+}

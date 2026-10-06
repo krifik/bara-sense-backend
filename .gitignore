@@ -1,0 +1,10 @@
+vendor
+server.exe
+server
+server.exe~
+.server.pid
+logs/
+*.log
+.env
+*.db
+
