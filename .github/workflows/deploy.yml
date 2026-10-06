@@ -13,7 +13,9 @@ jobs:
         with:
           host: 157.15.124.192
           username: root
+          password: ${{ secrets.SERVER_PASSWORD }}
           key: ${{ secrets.SERVER_SSH_KEY }}
+          port: 22
           script_stop: true
           script: |
             /opt/deploy.sh
