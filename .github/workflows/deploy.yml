@@ -23,39 +23,13 @@ jobs:
           password: ${{ secrets.SERVER_PASSWORD }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: 22
-          envs: TUYA_ACCESS_ID,TUYA_ACCESS_KEY,TUYA_ENDPOINT,POSTGRES_URL,PORT
-          script_stop: true
           script: |
-            mask() {
-              local v=$1
-              local l=${#v}
-              if [ -z "$v" ]; then echo "(kosong)"; elif [ $l -le 4 ]; then echo "***"; else echo "${v:0:3}...${v: -3}"; fi
-            }
-            echo "--- Backend Environment Configuration ---"
-            echo "TUYA_ACCESS_ID: $(mask "$TUYA_ACCESS_ID")"
-            echo "TUYA_ACCESS_KEY: $(mask "$TUYA_ACCESS_KEY")"
-            echo "TUYA_ENDPOINT: $(mask "$TUYA_ENDPOINT")"
-            echo "POSTGRES_URL: $(mask "$POSTGRES_URL")"
-            echo "PORT: $(mask "$PORT")"
-            echo "-----------------------------------------"
-
-            # Pastikan env ditulis ke root folder (/opt/bara-sense/.env) yang dipakai oleh podman run
             mkdir -p /opt/bara-sense/backend
-            echo "TUYA_ACCESS_ID=$TUYA_ACCESS_ID" > /opt/bara-sense/.env
-            echo "TUYA_ACCESS_KEY=$TUYA_ACCESS_KEY" >> /opt/bara-sense/.env
-            echo "TUYA_ENDPOINT=$TUYA_ENDPOINT" >> /opt/bara-sense/.env
-            echo "POSTGRES_URL=$POSTGRES_URL" >> /opt/bara-sense/.env
-            echo "PORT=$PORT" >> /opt/bara-sense/.env
-            
-            # Copy juga ke folder backend untuk build-time loading jika dibutuhkan
+            echo "TUYA_ACCESS_ID=${{ secrets.TUYA_ACCESS_ID }}" > /opt/bara-sense/.env
+            echo "TUYA_ACCESS_KEY=${{ secrets.TUYA_ACCESS_KEY }}" >> /opt/bara-sense/.env
+            echo "TUYA_ENDPOINT=${{ secrets.TUYA_ENDPOINT }}" >> /opt/bara-sense/.env
+            echo "POSTGRES_URL=${{ secrets.POSTGRES_URL }}" >> /opt/bara-sense/.env
+            echo "PORT=${{ secrets.PORT }}" >> /opt/bara-sense/.env
             cp /opt/bara-sense/.env /opt/bara-sense/backend/.env
             echo "Berhasil mengupdate .env di /opt/bara-sense/.env dan /opt/bara-sense/backend/.env"
-            
-            # Tetap export ke current session
-            export TUYA_ACCESS_ID=$TUYA_ACCESS_ID
-            export TUYA_ACCESS_KEY=$TUYA_ACCESS_KEY
-            export TUYA_ENDPOINT=$TUYA_ENDPOINT
-            export POSTGRES_URL=$POSTGRES_URL
-            export PORT=$PORT
-            
             /usr/bin/bash /opt/deploy-backend.sh
