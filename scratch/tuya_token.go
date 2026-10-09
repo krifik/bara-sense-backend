@@ -50,7 +50,8 @@ func main() {
 
 	// Test 3: /v1.0/iot-03/device-registration/token
 	var resp3 interface{}
-	err = connector.MakePostRequest(context.Background(), connector.WithAPIUri("/v1.0/iot-03/device-registration/token"), connector.WithPayload([]byte(`{"pairing_type":"BLE", "time_zone_id":"Asia/Jakarta"}`)), connector.WithResp(&resp3))
+	payload := `{"pairing_type":"WIFI", "time_zone_id":"Asia/Jakarta", "uid": "bay17913100056154MCI"}`
+	err = connector.MakePostRequest(context.Background(), connector.WithAPIUri("/v1.0/iot-03/device-registration/token"), connector.WithPayload([]byte(payload)), connector.WithResp(&resp3))
 	fmt.Printf("Test 3 (/v1.0/iot-03/device-registration/token): Err=%v, Resp=%v\n", err, resp3)
 
 }

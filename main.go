@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fiqri/home-automation-backend/domain"
 	"github.com/fiqri/home-automation-backend/infrastructure/db"
 	"github.com/fiqri/home-automation-backend/infrastructure/tuya"
 	"github.com/gofiber/fiber/v2"
@@ -741,25 +742,7 @@ func broadcastAnalytics(dbConn *sql.DB, wsHub *WsHub) {
 	wsHub.broadcast <- bytes
 }
 
-type ScheduleItem struct {
-	ID         int    `json:"id"`
-	DeviceID   string `json:"device_id"`
-	DeviceName string `json:"device_name"`
-	Action     string `json:"action"`      // "ON" or "OFF"
-	TimeTarget string `json:"time_target"` // "HH:MM"
-	Days       string `json:"days"`        // "ALL", "WEEKDAY", "WEEKEND"
-	IsActive   bool   `json:"is_active"`
-	CreatedAt  string `json:"created_at"`
-}
 
-type DeviceTimerItem struct {
-	DeviceID        string `json:"device_id"`
-	DeviceName      string `json:"device_name"`
-	TargetAction    string `json:"target_action"`
-	ExpiresAt       string `json:"expires_at"`
-	DurationMinutes int    `json:"duration_minutes"`
-	RemainingSec    int    `json:"remaining_seconds"`
-}
 
 func executeDeviceToggle(dbConn *sql.DB, wsHub *WsHub, tuyaAccessID, tuyaAccessKey, tuyaEndpoint, deviceID string, targetStatus bool) error {
 	client := tuya.NewCloudClient(deviceID, tuyaAccessID, tuyaAccessKey, tuyaEndpoint)
@@ -925,47 +908,7 @@ func startSchedulerWorker(dbConn *sql.DB, wsHub *WsHub, tuyaAccessID, tuyaAccess
 	}()
 }
 
-type SceneAction struct {
-	DeviceID string `json:"device_id"`
-	Status   bool   `json:"status"`
-}
 
-type SceneItem struct {
-	ID          string        `json:"id"`
-	Name        string        `json:"name"`
-	Icon        string        `json:"icon"`
-	Description string        `json:"description"`
-	Actions     []SceneAction `json:"actions"`
-	IsPreset    bool          `json:"is_preset"`
-	CreatedAt   string        `json:"created_at"`
-}
-
-type PowerGuardConfig struct {
-	ID                int    `json:"id"`
-	MaxWattLimit      int    `json:"max_watt_limit"`
-	IsEnabled         bool   `json:"is_enabled"`
-	CutoffDurationSec int    `json:"cutoff_duration_sec"`
-	LastTriggeredAt   string `json:"last_triggered_at"`
-	CurrentTotalWatts int    `json:"current_total_watts"`
-}
-
-type BudgetSettings struct {
-	MonthlyBudgetIDR      float64 `json:"monthly_budget_idr"`
-	WarningThresholdPct   float64 `json:"warning_threshold_pct"`
-	CurrentMonthCostIDR   float64 `json:"current_month_cost_idr"`
-	CurrentMonthKwh       float64 `json:"current_month_kwh"`
-	UsagePct              float64 `json:"usage_pct"`
-	ProjectedMonthCostIDR float64 `json:"projected_month_cost_idr"`
-}
-
-type TelegramConfig struct {
-	BotToken         string `json:"bot_token"`
-	ChatID           string `json:"chat_id"`
-	IsEnabled        bool   `json:"is_enabled"`
-	NotifyOnOverload bool   `json:"notify_on_overload"`
-	NotifyOnLeak     bool   `json:"notify_on_leak"`
-	DailyDigestTime  string `json:"daily_digest_time"`
-}
 
 func sendTelegramNotification(dbConn *sql.DB, message string) {
 	var token, chatID string
@@ -997,7 +940,7 @@ func executeScene(dbConn *sql.DB, wsHub *WsHub, tuyaAccessID, tuyaAccessKey, tuy
 		return err
 	}
 
-	var actions []SceneAction
+	var actions []domain.SceneAction
 	if err := json.Unmarshal([]byte(actionsJSON), &actions); err != nil {
 		return err
 	}
@@ -2605,15 +2548,15 @@ func main() {
 		}
 		defer rows.Close()
 
-		var list []ScheduleItem
+		var list []domain.ScheduleItem
 		for rows.Next() {
-			var item ScheduleItem
+			var item domain.ScheduleItem
 			if err := rows.Scan(&item.ID, &item.DeviceID, &item.DeviceName, &item.Action, &item.TimeTarget, &item.Days, &item.IsActive, &item.CreatedAt); err == nil {
 				list = append(list, item)
 			}
 		}
 		if list == nil {
-			list = []ScheduleItem{}
+			list = []domain.ScheduleItem{}
 		}
 		return c.JSON(fiber.Map{"status": "success", "schedules": list})
 	})
@@ -2688,9 +2631,9 @@ func main() {
 		}
 		defer rows.Close()
 
-		var timers []DeviceTimerItem
+		var timers []domain.DeviceTimerItem
 		for rows.Next() {
-			var t DeviceTimerItem
+			var t domain.DeviceTimerItem
 			if err := rows.Scan(&t.DeviceID, &t.DeviceName, &t.TargetAction, &t.ExpiresAt, &t.DurationMinutes, &t.RemainingSec); err == nil {
 				if t.RemainingSec > 0 {
 					timers = append(timers, t)
@@ -2698,7 +2641,7 @@ func main() {
 			}
 		}
 		if timers == nil {
-			timers = []DeviceTimerItem{}
+			timers = []domain.DeviceTimerItem{}
 		}
 		return c.JSON(fiber.Map{"status": "success", "timers": timers})
 	})
@@ -2765,7 +2708,7 @@ func main() {
 			var id, name, icon, desc, actionsJSON, createdAt string
 			var isPreset bool
 			if err := rows.Scan(&id, &name, &icon, &desc, &actionsJSON, &isPreset, &createdAt); err == nil {
-				var actions []SceneAction
+				var actions []domain.SceneAction
 				_ = json.Unmarshal([]byte(actionsJSON), &actions)
 				list = append(list, fiber.Map{
 					"id":          id,
@@ -2805,7 +2748,7 @@ func main() {
 			Name        string        `json:"name"`
 			Icon        string        `json:"icon"`
 			Description string        `json:"description"`
-			Actions     []SceneAction `json:"actions"`
+			Actions     []domain.SceneAction `json:"actions"`
 		}
 		var req NewSceneReq
 		if err := c.BodyParser(&req); err != nil || strings.TrimSpace(req.Name) == "" {
