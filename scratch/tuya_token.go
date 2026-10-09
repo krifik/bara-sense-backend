@@ -12,8 +12,9 @@ import (
 )
 
 func main() {
-	b, _ := ioutil.ReadFile("../.env")
-	lines := strings.Split(string(b), "\n")
+	b, _ := ioutil.ReadFile(".env")
+	content := strings.ReplaceAll(string(b), "\r", "")
+	lines := strings.Split(content, "\n")
 	for _, l := range lines {
 		l = strings.TrimSpace(l)
 		if strings.HasPrefix(l, "TUYA_ACCESS_ID=") {
@@ -35,7 +36,7 @@ func main() {
 		endpoint = "https://openapi.tuyaus.com"
 	}
 
-	connector.InitWithOptions(env.WithAccessID(accessID), env.WithAccessKey(accessKey), env.WithApiHost(endpoint), env.WithMsgHost("pulsar+ssl://mqe.tuyaus.com:7285/"))
+	connector.InitWithOptions(env.WithAccessID(accessID), env.WithAccessKey(accessKey), env.WithApiHost(endpoint), env.WithMsgHost(endpoint))
 
 	// Test 1: /v1.0/devices/tokens
 	var resp1 interface{}

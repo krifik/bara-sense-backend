@@ -14,13 +14,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 
 # Cache go modules
 COPY backend/go.mod backend/go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 
 # Copy backend source code
 COPY backend/ ./
 
 # Build statically-linked binary
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o server main.go tuya_history.go
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o server main.go tuya_history.go
 
 # ------------------------------------------
 # Stage 3: Debian Slim Production Runner
