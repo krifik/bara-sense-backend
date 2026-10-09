@@ -25,6 +25,19 @@ jobs:
           envs: TUYA_ACCESS_ID,TUYA_ACCESS_KEY,TUYA_ENDPOINT,POSTGRES_URL,PORT
           script_stop: true
           script: |
+            mask() {
+              local v=$1
+              local l=${#v}
+              if [ -z "$v" ]; then echo "(kosong)"; elif [ $l -le 4 ]; then echo "***"; else echo "${v:0:3}...${v: -3}"; fi
+            }
+            echo "--- Backend Environment Configuration ---"
+            echo "TUYA_ACCESS_ID: $(mask "$TUYA_ACCESS_ID")"
+            echo "TUYA_ACCESS_KEY: $(mask "$TUYA_ACCESS_KEY")"
+            echo "TUYA_ENDPOINT: $(mask "$TUYA_ENDPOINT")"
+            echo "POSTGRES_URL: $(mask "$POSTGRES_URL")"
+            echo "PORT: $(mask "$PORT")"
+            echo "-----------------------------------------"
+
             # Buat file .env sementara yang bisa dibaca oleh script deploy atau dipindah ke folder repo
             echo "TUYA_ACCESS_ID=$TUYA_ACCESS_ID" > /tmp/.backend.env
             echo "TUYA_ACCESS_KEY=$TUYA_ACCESS_KEY" >> /tmp/.backend.env
