@@ -38,14 +38,27 @@ jobs:
             echo "PORT: $(mask "$PORT")"
             echo "-----------------------------------------"
 
-            # Buat file .env sementara yang bisa dibaca oleh script deploy atau dipindah ke folder repo
-            echo "TUYA_ACCESS_ID=$TUYA_ACCESS_ID" > /tmp/.backend.env
-            echo "TUYA_ACCESS_KEY=$TUYA_ACCESS_KEY" >> /tmp/.backend.env
-            echo "TUYA_ENDPOINT=$TUYA_ENDPOINT" >> /tmp/.backend.env
-            echo "POSTGRES_URL=$POSTGRES_URL" >> /tmp/.backend.env
-            echo "PORT=$PORT" >> /tmp/.backend.env
+            # Cari folder repositori git backend di server
+            BACKEND_REPO=$(find /root /opt /var/www /home -maxdepth 4 -name ".git" -type d 2>/dev/null | while read gitdir; do
+              if grep -q "bara-sense-backend" "$gitdir/config"; then
+                dirname "$gitdir"
+                break
+              fi
+            done)
             
-            # Export ke current session juga
+            if [ -n "$BACKEND_REPO" ]; then
+              echo "Menemukan repositori backend di $BACKEND_REPO"
+              echo "TUYA_ACCESS_ID=$TUYA_ACCESS_ID" > "$BACKEND_REPO/.env"
+              echo "TUYA_ACCESS_KEY=$TUYA_ACCESS_KEY" >> "$BACKEND_REPO/.env"
+              echo "TUYA_ENDPOINT=$TUYA_ENDPOINT" >> "$BACKEND_REPO/.env"
+              echo "POSTGRES_URL=$POSTGRES_URL" >> "$BACKEND_REPO/.env"
+              echo "PORT=$PORT" >> "$BACKEND_REPO/.env"
+              echo "Berhasil mengupdate .env di $BACKEND_REPO"
+            else
+              echo "PERINGATAN: Repositori backend tidak ditemukan, .env gagal diperbarui!"
+            fi
+            
+            # Tetap export ke current session
             export TUYA_ACCESS_ID=$TUYA_ACCESS_ID
             export TUYA_ACCESS_KEY=$TUYA_ACCESS_KEY
             export TUYA_ENDPOINT=$TUYA_ENDPOINT
