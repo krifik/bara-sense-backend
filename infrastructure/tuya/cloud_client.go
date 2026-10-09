@@ -190,7 +190,8 @@ func (c *CloudClient) CreatePairingToken(timeZone string) (interface{}, error) {
 	}
 
 	payload := map[string]interface{}{
-		"time_zone": timeZone,
+		"time_zone_id": timeZone,
+		"pairing_type": "BLE",
 	}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -198,7 +199,7 @@ func (c *CloudClient) CreatePairingToken(timeZone string) (interface{}, error) {
 	}
 
 	var resp interface{}
-	apiURI := "/v1.0/devices/tokens"
+	apiURI := "/v1.0/iot-03/device-registration/token"
 
 	err = connector.MakePostRequest(
 		context.Background(),
@@ -219,7 +220,7 @@ func (c *CloudClient) GetPairingTokenStatus(token string) (interface{}, error) {
 	log.Printf("Querying status of pairing token %s from Tuya Cloud...", token)
 
 	var resp interface{}
-	apiURI := fmt.Sprintf("/v1.0/devices/tokens/%s", token)
+	apiURI := fmt.Sprintf("/v1.0/iot-03/device-registration/tokens/%s", token)
 
 	err := connector.MakeGetRequest(
 		context.Background(),
