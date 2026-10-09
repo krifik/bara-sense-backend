@@ -1893,42 +1893,82 @@ func main() {
 	api.Post("/sync-all", requireRole("admin", "operator"), func(c *fiber.Ctx) error {
 		client := tuya.NewCloudClient("", tuyaAccessID, tuyaAccessKey, tuyaEndpoint)
 		cloudResp, err := client.GetCloudDevices()
-		if err != nil || cloudResp == nil {
-			return c.Status(502).JSON(fiber.Map{"error": "Gagal menghubungi Tuya Cloud untuk sinkronisasi"})
-		}
-
+		
+		syncedIDs := make(map[string]bool)
 		syncedCount := 0
-		b, errM := json.Marshal(cloudResp)
-		if errM == nil {
-			var tResp TuyaCloudResponse
-			if errU := json.Unmarshal(b, &tResp); errU == nil && tResp.Success {
-				for _, cd := range tResp.Result.Devices {
-					cStatus, pWatt, _, _, _ := parseCloudDeviceTelemetry(cd)
-					pInt := int(math.Round(pWatt))
-					devName := cd.Name
-					if devName == "" {
-						devName = "Perangkat " + cd.ID
-					}
 
-					res, errUp := dbConn.Exec(`
-						INSERT INTO devices (id, name, status, power, priority, allowed_roles)
-						VALUES ($1, $2, $3, $4, 2, 'admin,operator,viewer')
-						ON CONFLICT (id) DO UPDATE SET
-							name = EXCLUDED.name,
-							status = EXCLUDED.status,
-							power = EXCLUDED.power
-					`, cd.ID, devName, cStatus, pInt)
-
-					if errUp == nil {
-						if n, _ := res.RowsAffected(); n > 0 {
-							syncedCount++
+		if err == nil && cloudResp != nil {
+			b, errM := json.Marshal(cloudResp)
+			if errM == nil {
+				var tResp TuyaCloudResponse
+				if errU := json.Unmarshal(b, &tResp); errU == nil && tResp.Success {
+					for _, cd := range tResp.Result.Devices {
+						cStatus, pWatt, _, _, _ := parseCloudDeviceTelemetry(cd)
+						pInt := int(math.Round(pWatt))
+						devName := cd.Name
+						if devName == "" {
+							devName = "Perangkat " + cd.ID
+						}
+	
+						res, errUp := dbConn.Exec(`
+							INSERT INTO devices (id, name, status, power, priority, allowed_roles)
+							VALUES ($1, $2, $3, $4, 2, 'admin,operator,viewer')
+							ON CONFLICT (id) DO UPDATE SET
+								name = EXCLUDED.name,
+								status = EXCLUDED.status,
+								power = EXCLUDED.power
+						`, cd.ID, devName, cStatus, pInt)
+	
+						if errUp == nil {
+							syncedIDs[cd.ID] = true
+							if n, _ := res.RowsAffected(); n > 0 {
+								syncedCount++
+							}
 						}
 					}
 				}
 			}
 		}
 
+		// Fallback sinkronisasi realtime untuk shared devices yang sudah ada di database 
+		// namun tidak dikembalikan oleh GetCloudDevices (karena ownership).
+		rows, errDB := dbConn.Query("SELECT id FROM devices")
+		if errDB == nil {
+			for rows.Next() {
+				var dbID string
+				if err := rows.Scan(&dbID); err == nil {
+					if !syncedIDs[dbID] {
+						devClient := tuya.NewCloudClient(dbID, tuyaAccessID, tuyaAccessKey, tuyaEndpoint)
+						statusList, errStatus := devClient.GetDeviceStatus()
+						if errStatus == nil && len(statusList) > 0 {
+							var items []TuyaCloudStatusItem
+							for _, st := range statusList {
+								items = append(items, TuyaCloudStatusItem{
+									Code:  fmt.Sprintf("%v", st["code"]),
+									Value: st["value"],
+								})
+							}
+							cDev := TuyaCloudDeviceItem{Status: items}
+							sStatus, pWatt, _, _, _ := parseCloudDeviceTelemetry(cDev)
+							
+							res, errUp := dbConn.Exec("UPDATE devices SET status = $1, power = $2 WHERE id = $3", sStatus, int(math.Round(pWatt)), dbID)
+							if errUp == nil {
+								if n, _ := res.RowsAffected(); n > 0 {
+									syncedCount++
+								}
+							}
+						}
+					}
+				}
+			}
+			rows.Close()
+		}
+
 		broadcastAnalytics(dbConn, wsHub)
+
+		if syncedCount == 0 && err != nil {
+			return c.Status(502).JSON(fiber.Map{"error": "Gagal menghubungi Tuya Cloud untuk sinkronisasi"})
+		}
 
 		return c.JSON(fiber.Map{
 			"status":       "success",
@@ -2096,6 +2136,24 @@ func main() {
 		client := tuya.NewCloudClient(req.ID, tuyaAccessID, tuyaAccessKey, tuyaEndpoint)
 		details, _ := client.GetDeviceDetails()
 		cloudPower, cloudStatus, cloudName, fetched := extractTuyaDevicePowerAndInfo(details)
+
+		// Coba ambil realtime status dari perangkat (mendukung shared device)
+		if statusList, errStatus := client.GetDeviceStatus(); errStatus == nil && len(statusList) > 0 {
+			var items []TuyaCloudStatusItem
+			for _, st := range statusList {
+				items = append(items, TuyaCloudStatusItem{
+					Code:  fmt.Sprintf("%v", st["code"]),
+					Value: st["value"],
+				})
+			}
+			cDev := TuyaCloudDeviceItem{Status: items}
+			sStatus, pWatt, _, _, _ := parseCloudDeviceTelemetry(cDev)
+			cloudStatus = sStatus
+			if pWatt > 0 {
+				cloudPower = int(math.Round(pWatt))
+			}
+			fetched = true
+		}
 
 		if fetched {
 			if strings.TrimSpace(req.Name) == "" && cloudName != "" {
@@ -2424,12 +2482,29 @@ func main() {
 		deviceID := c.Params("id")
 		client := tuya.NewCloudClient(deviceID, tuyaAccessID, tuyaAccessKey, tuyaEndpoint)
 
-		details, err := client.GetDeviceDetails()
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-		}
-
+		details, errDetails := client.GetDeviceDetails()
 		cloudPower, cloudStatus, cloudName, fetched := extractTuyaDevicePowerAndInfo(details)
+
+		// Coba ambil realtime status dari perangkat (mendukung shared device)
+		statusList, errStatus := client.GetDeviceStatus()
+		if errStatus == nil && len(statusList) > 0 {
+			var items []TuyaCloudStatusItem
+			for _, st := range statusList {
+				items = append(items, TuyaCloudStatusItem{
+					Code:  fmt.Sprintf("%v", st["code"]),
+					Value: st["value"],
+				})
+			}
+			cDev := TuyaCloudDeviceItem{Status: items}
+			sStatus, pWatt, _, _, _ := parseCloudDeviceTelemetry(cDev)
+			cloudStatus = sStatus
+			if pWatt > 0 {
+				cloudPower = int(math.Round(pWatt))
+			}
+			fetched = true
+		} else if errDetails != nil {
+			return c.Status(500).JSON(fiber.Map{"error": fmt.Sprintf("Gagal mendapatkan detail & status perangkat: %v", errDetails)})
+		}
 
 		if fetched {
 			if cloudPower > 0 {

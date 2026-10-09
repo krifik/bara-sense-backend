@@ -10,12 +10,33 @@ jobs:
     steps:
       - name: Deploy Backend to Server via SSH
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          TUYA_ACCESS_ID: ${{ secrets.TUYA_ACCESS_ID }}
+          TUYA_ACCESS_KEY: ${{ secrets.TUYA_ACCESS_KEY }}
+          TUYA_ENDPOINT: ${{ secrets.TUYA_ENDPOINT }}
+          POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
+          PORT: ${{ secrets.PORT }}
         with:
           host: 157.15.124.192
           username: root
           password: ${{ secrets.SERVER_PASSWORD }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: 22
+          envs: TUYA_ACCESS_ID,TUYA_ACCESS_KEY,TUYA_ENDPOINT,POSTGRES_URL,PORT
           script_stop: true
           script: |
+            # Buat file .env sementara yang bisa dibaca oleh script deploy atau dipindah ke folder repo
+            echo "TUYA_ACCESS_ID=$TUYA_ACCESS_ID" > /tmp/.backend.env
+            echo "TUYA_ACCESS_KEY=$TUYA_ACCESS_KEY" >> /tmp/.backend.env
+            echo "TUYA_ENDPOINT=$TUYA_ENDPOINT" >> /tmp/.backend.env
+            echo "POSTGRES_URL=$POSTGRES_URL" >> /tmp/.backend.env
+            echo "PORT=$PORT" >> /tmp/.backend.env
+            
+            # Export ke current session juga
+            export TUYA_ACCESS_ID=$TUYA_ACCESS_ID
+            export TUYA_ACCESS_KEY=$TUYA_ACCESS_KEY
+            export TUYA_ENDPOINT=$TUYA_ENDPOINT
+            export POSTGRES_URL=$POSTGRES_URL
+            export PORT=$PORT
+            
             /usr/bin/bash /opt/deploy-backend.sh
