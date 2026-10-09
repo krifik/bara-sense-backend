@@ -1054,6 +1054,7 @@ func startPowerGuardWorker(dbConn *sql.DB, wsHub *WsHub, tuyaAccessID, tuyaAcces
 		}
 	}()
 }
+var globalLogPath string
 
 func main() {
 	loadEnv()
@@ -1065,6 +1066,7 @@ func main() {
 	for _, lp := range logFilePaths {
 		lf, err := os.OpenFile(lp, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err == nil {
+			globalLogPath = lp
 			logOutput = io.MultiWriter(os.Stdout, lf)
 			log.SetOutput(logOutput)
 			break
@@ -3066,6 +3068,34 @@ func main() {
 		}
 
 		return c.JSON(fiber.Map{"status": "success", "message": "Pesan uji coba berhasil terkirim ke Telegram Anda!"})
+	})
+
+	// 17. API: Membaca log sistem dari backend (Hanya Admin)
+	api.Get("/system/logs", requireRole("admin"), func(c *fiber.Ctx) error {
+		if globalLogPath == "" {
+			return c.Status(404).JSON(fiber.Map{"error": "Log file tidak ditemukan atau tidak aktif"})
+		}
+		
+		file, err := os.Open(globalLogPath)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Gagal membaca log sistem"})
+		}
+		defer file.Close()
+		
+		var lines []string
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			lines = append(lines, scanner.Text())
+			// Batasi jumlah memori, maksimal 1000 baris terakhir
+			if len(lines) > 1000 {
+				lines = lines[1:]
+			}
+		}
+		
+		return c.JSON(fiber.Map{
+			"status": "success",
+			"logs": lines,
+		})
 	})
 
 	// Serve Static Frontend React Single Page App (dist directory)
