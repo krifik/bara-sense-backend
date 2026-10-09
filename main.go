@@ -87,6 +87,16 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
+func maskEnv(val string) string {
+	l := len(val)
+	if l == 0 {
+		return "(kosong)"
+	} else if l <= 4 {
+		return "***"
+	}
+	return val[:3] + "..." + val[l-3:]
+}
+
 type TuyaCloudStatusItem struct {
 	Code  string      `json:"code"`
 	Value interface{} `json:"value"`
@@ -1072,6 +1082,11 @@ func main() {
 	}
 
 	log.Println("Starting BARA-Sense Backend (Building Automation & Realtime Analytics) with PostgreSQL Database & Tuya Hardware Meter Sync...")
+	log.Printf("[ENV] TUYA_ACCESS_ID: %s\n", maskEnv(tuyaAccessID))
+	log.Printf("[ENV] TUYA_ACCESS_KEY: %s\n", maskEnv(tuyaAccessKey))
+	log.Printf("[ENV] TUYA_ENDPOINT: %s\n", maskEnv(tuyaEndpoint))
+	log.Printf("[ENV] POSTGRES_URL: %s\n", maskEnv(postgresURL))
+	log.Printf("[ENV] PORT: %s\n", maskEnv(port))
 
 	dbConn, err := db.NewPostgresDB(postgresURL)
 	if err != nil {
