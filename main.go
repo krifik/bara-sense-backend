@@ -3119,6 +3119,20 @@ func main() {
 		})
 	}
 
+	maskString := func(s string) string {
+		if len(s) <= 4 {
+			return "***"
+		}
+		return s[:2] + strings.Repeat("*", len(s)-4) + s[len(s)-2:]
+	}
+	
+	log.Printf("=== ENVIRONMENT VARS ===")
+	log.Printf("TUYA_ACCESS_ID: %s", maskString(tuyaAccessID))
+	log.Printf("TUYA_ACCESS_KEY: %s", maskString(tuyaAccessKey))
+	log.Printf("TUYA_ENDPOINT: %s", tuyaEndpoint)
+	log.Printf("PORT: %s", port)
+	log.Printf("========================")
+
 	log.Printf("Server is running on port %s...\n", port)
 	log.Printf("Frontend Web App available at http://localhost:%s\n", port)
 	log.Printf("Swagger Documentation available at http://localhost:%s/docs\n", port)
