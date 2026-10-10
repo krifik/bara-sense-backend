@@ -24,7 +24,7 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: 22
           script: |
-            bash << 'EOF'
+            echo '
             mask() {
               local v="$1"
               local l=${#v}
@@ -48,5 +48,6 @@ jobs:
             echo "PORT=${{ secrets.PORT }}" >> /opt/bara-sense/.env
             cp /opt/bara-sense/.env /opt/bara-sense/backend/.env
             echo "Berhasil mengupdate .env di /opt/bara-sense/.env dan /opt/bara-sense/backend/.env"
-            EOF
+            ' > /tmp/setup_env.sh
+            /usr/bin/bash /tmp/setup_env.sh
             /usr/bin/bash /opt/deploy-backend.sh
