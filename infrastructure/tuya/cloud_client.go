@@ -256,13 +256,52 @@ func (c *CloudClient) RawGet(apiURI string) (map[string]interface{}, error) {
 	return resp, nil
 }
 
-// GetDeviceStatus mengambil status realtime langsung dari perangkat (termasuk shared device)
+var (
+	deviceStatusCache     = make(map[string][]map[string]interface{})
+	deviceStatusCacheTime = make(map[string]time.Time)
+	deviceStatusMutex     sync.Mutex
+)
+
+// GetDeviceStatus mengambil status realtime langsung dari perangkat dengan cache 8 detik
 func (c *CloudClient) GetDeviceStatus() ([]map[string]interface{}, error) {
+	deviceStatusMutex.Lock()
+	defer deviceStatusMutex.Unlock()
+
+	now := time.Now()
+	if now.Before(quotaExhaustedUntil) {
+		if cached, ok := deviceStatusCache[c.DeviceID]; ok {
+			return cached, nil
+		}
+		return nil, fmt.Errorf("Tuya API quota exhausted, cool down aktif")
+	}
+
+	if cached, ok := deviceStatusCache[c.DeviceID]; ok {
+		if now.Sub(deviceStatusCacheTime[c.DeviceID]) < 8*time.Second {
+			return cached, nil
+		}
+	}
+
 	uri := fmt.Sprintf("/v1.0/devices/%s/status", c.DeviceID)
 	resp, err := c.RawGet(uri)
 	if err != nil {
 		return nil, err
 	}
+
+	// Cek quota error
+	if resp != nil {
+		if b, errM := json.Marshal(resp); errM == nil {
+			respStr := string(b)
+			if strings.Contains(respStr, "28841004") || strings.Contains(respStr, "quota is exhausted") {
+				quotaExhaustedUntil = now.Add(10 * time.Minute)
+				log.Println("[TUYA QUOTA PROTECTION] Quota exhausted pada GetDeviceStatus, cooldown 10 menit.")
+				if cached, ok := deviceStatusCache[c.DeviceID]; ok {
+					return cached, nil
+				}
+				return nil, fmt.Errorf("Tuya API quota exhausted")
+			}
+		}
+	}
+
 	resSlice, ok := resp["result"].([]interface{})
 	if !ok {
 		return nil, fmt.Errorf("format respons status tidak valid")
@@ -273,6 +312,11 @@ func (c *CloudClient) GetDeviceStatus() ([]map[string]interface{}, error) {
 			out = append(out, m)
 		}
 	}
+
+	deviceStatusCache[c.DeviceID] = out
+	deviceStatusCacheTime[c.DeviceID] = now
+
 	return out, nil
 }
+
 

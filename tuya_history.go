@@ -266,10 +266,9 @@ func syncDeviceEnergyHistoryFromTuya(dbConn *sql.DB, accessID, accessKey, endpoi
 	return res
 }
 
-// syncAllEnergyHistoryFromTuya menjalankan sinkronisasi untuk semua perangkat berpengukur energi.
-// Jika onlyDeviceID ditentukan, fungsi akan mencoba sinkronisasi langsung (termasuk untuk shared device).
+// syncAllEnergyHistoryFromTuya menjalankan sinkronisasi riwayat energi untuk perangkat ter-pairing.
 func syncAllEnergyHistoryFromTuya(dbConn *sql.DB, accessID, accessKey, endpoint, onlyDeviceID string, days int) ([]tuyaDeviceSyncResult, error) {
-	// Jika onlyDeviceID diberikan secara spesifik (misal dari UI perangkat atau perangkat shared)
+	// Jika onlyDeviceID diberikan secara spesifik dari UI perangkat yang dipilih
 	if onlyDeviceID != "" {
 		var name string
 		_ = dbConn.QueryRow("SELECT name FROM devices WHERE id = $1", onlyDeviceID).Scan(&name)

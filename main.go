@@ -214,9 +214,8 @@ func parseCloudDeviceTelemetry(dev TuyaCloudDeviceItem) (status bool, powerWatt 
 		}
 	}
 
-	// Jika perangkat offline di Tuya Cloud atau saklar sedang OFF (mati), konsumsi daya dan arus otomatis 0
-	if !dev.Online || !status {
-		status = false
+	// Jika saklar sedang OFF (mati), konsumsi daya, arus, dan tegangan otomatis 0
+	if !status {
 		powerWatt = 0.0
 		current = 0.0
 		voltage = 0.0
@@ -1049,12 +1048,10 @@ func main() {
 	// Mulai Proteksi Anti-Jeglek PLN (Smart Load Shedding & Ceiling Guard)
 	startPowerGuardWorker(dbConn, wsHub, tuyaAccessID, tuyaAccessKey, tuyaEndpoint)
 
-	// CATATAN: Sinkronisasi Tuya Cloud (GetCloudDevices & History Sync) TIDAK dijalankan secara berkala
-	// di background loop agar kuota API Tuya Cloud tidak terbuang / exhausted.
-	// Tuya Cloud hanya diakses saat pengguna secara manual mengklik tombol "Pindai Perangkat" (/api/scan)
-	// atau "Sinkronkan Riwayat" (/api/energy/sync-tuya).
+	// Background telemetry syncer & WebSocket broadcaster
 	go func() {
 		ticker := time.NewTicker(3 * time.Second)
+		pollCounter := 0
 		for range ticker.C {
 			// Pastikan perangkat yang status = false tidak memiliki power sisa di database
 			_, _ = dbConn.Exec("UPDATE devices SET power = 0 WHERE status = false")
@@ -1062,6 +1059,39 @@ func main() {
 			wsHub.mutex.Lock()
 			clientCount := len(wsHub.clients)
 			wsHub.mutex.Unlock()
+
+			// Setiap 9-12 detik (3-4 tick), jika ada client aktif membuka dashboard, segarkan telemetri daya dari Tuya Cloud
+			pollCounter++
+			if clientCount > 0 && pollCounter >= 3 {
+				pollCounter = 0
+				rowsDev, errDev := dbConn.Query("SELECT id FROM devices WHERE status = true")
+				if errDev == nil {
+					for rowsDev.Next() {
+						var dID string
+						if errScan := rowsDev.Scan(&dID); errScan == nil && dID != "" {
+							devClient := tuya.NewCloudClient(dID, tuyaAccessID, tuyaAccessKey, tuyaEndpoint)
+							if stList, errSt := devClient.GetDeviceStatus(); errSt == nil && len(stList) > 0 {
+								var items []TuyaCloudStatusItem
+								for _, st := range stList {
+									items = append(items, TuyaCloudStatusItem{
+										Code:  fmt.Sprintf("%v", st["code"]),
+										Value: st["value"],
+									})
+								}
+								cDev := TuyaCloudDeviceItem{Status: items}
+								sStat, pWatt, _, _, _ := parseCloudDeviceTelemetry(cDev)
+								pInt := int(math.Round(pWatt))
+								if pInt > 0 {
+									_, _ = dbConn.Exec("UPDATE devices SET status = $1, power = $2 WHERE id = $3", sStat, pInt, dID)
+								} else {
+									_, _ = dbConn.Exec("UPDATE devices SET status = $1 WHERE id = $2", sStat, dID)
+								}
+							}
+						}
+					}
+					rowsDev.Close()
+				}
+			}
 
 			if clientCount > 0 {
 				broadcastAnalytics(dbConn, wsHub)
@@ -1801,21 +1831,6 @@ func main() {
 				if devPower <= 0 && pWatt > 0 {
 					devPower = int(math.Round(pWatt))
 				}
-			} else {
-				// Fallback untuk perangkat yang dishare ke akun (Direct Query via Device ID)
-				singleClient := tuya.NewCloudClient(devID, tuyaAccessID, tuyaAccessKey, tuyaEndpoint)
-				if details, errDet := singleClient.GetDeviceDetails(); errDet == nil && details != nil {
-					cPower, cStatus, cName, fetched := extractTuyaDevicePowerAndInfo(details)
-					if fetched {
-						devStatus = cStatus
-						if devName == "" && cName != "" {
-							devName = cName
-						}
-						if devPower <= 0 && cPower > 0 {
-							devPower = cPower
-						}
-					}
-				}
 			}
 
 			if devName == "" {
@@ -1890,40 +1905,7 @@ func main() {
 			}
 		}
 
-		// Fallback sinkronisasi realtime untuk shared devices yang sudah ada di database 
-		// namun tidak dikembalikan oleh GetCloudDevices (karena ownership).
-		rows, errDB := dbConn.Query("SELECT id FROM devices")
-		if errDB == nil {
-			for rows.Next() {
-				var dbID string
-				if err := rows.Scan(&dbID); err == nil {
-					if !syncedIDs[dbID] {
-						devClient := tuya.NewCloudClient(dbID, tuyaAccessID, tuyaAccessKey, tuyaEndpoint)
-						statusList, errStatus := devClient.GetDeviceStatus()
-						if errStatus == nil && len(statusList) > 0 {
-							var items []TuyaCloudStatusItem
-							for _, st := range statusList {
-								items = append(items, TuyaCloudStatusItem{
-									Code:  fmt.Sprintf("%v", st["code"]),
-									Value: st["value"],
-								})
-							}
-							cDev := TuyaCloudDeviceItem{Status: items}
-							sStatus, pWatt, _, _, _ := parseCloudDeviceTelemetry(cDev)
-							
-							res, errUp := dbConn.Exec("UPDATE devices SET status = $1, power = $2 WHERE id = $3", sStatus, int(math.Round(pWatt)), dbID)
-							if errUp == nil {
-								if n, _ := res.RowsAffected(); n > 0 {
-									syncedCount++
-								}
-							}
-						}
-					}
-				}
-			}
-			rows.Close()
-		}
-
+		// Hanya sinkronkan perangkat yang ter-pairing pada akun Tuya (GetCloudDevices)
 		broadcastAnalytics(dbConn, wsHub)
 
 		if syncedCount == 0 && err != nil {
