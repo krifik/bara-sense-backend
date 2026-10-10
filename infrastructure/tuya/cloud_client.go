@@ -88,6 +88,7 @@ func (c *CloudClient) SendCommand(commands []map[string]interface{}) error {
 	}
 
 	log.Println("[tuya-cloud] Command successfully sent to device.")
+	c.InvalidateDeviceCache()
 	return nil
 }
 
@@ -261,6 +262,14 @@ var (
 	deviceStatusCacheTime = make(map[string]time.Time)
 	deviceStatusMutex     sync.Mutex
 )
+
+// InvalidateDeviceCache menghapus cache status perangkat sehingga pembacaan berikutnya memicu fetch langsung ke Tuya Cloud
+func (c *CloudClient) InvalidateDeviceCache() {
+	deviceStatusMutex.Lock()
+	defer deviceStatusMutex.Unlock()
+	delete(deviceStatusCache, c.DeviceID)
+	delete(deviceStatusCacheTime, c.DeviceID)
+}
 
 // GetDeviceStatus mengambil status realtime langsung dari perangkat dengan cache 8 detik
 func (c *CloudClient) GetDeviceStatus() ([]map[string]interface{}, error) {

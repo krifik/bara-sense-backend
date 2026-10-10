@@ -764,18 +764,53 @@ func executeDeviceToggle(dbConn *sql.DB, wsHub *WsHub, tuyaAccessID, tuyaAccessK
 			return err
 		}
 	} else {
-		// Ketika saklar dinyalakan, coba baca telemetri aktual dari Tuya
-		details, errD := client.GetDeviceDetails()
-		if errD == nil && details != nil {
-			cPower, _, _, fetched := extractTuyaDevicePowerAndInfo(details)
-			if fetched && cPower > 0 {
-				_, _ = dbConn.Exec("UPDATE devices SET status = true, power = $1 WHERE id = $2", cPower, deviceID)
-			} else {
-				_, _ = dbConn.Exec("UPDATE devices SET status = true WHERE id = $1", deviceID)
+		// Ketika saklar dinyalakan, hapus cache status agar langsung membaca nilai baru
+		client.InvalidateDeviceCache()
+		_, _ = dbConn.Exec("UPDATE devices SET status = true WHERE id = $1", deviceID)
+
+		// Coba baca telemetri aktual langsung via GetDeviceStatus
+		if stList, errSt := client.GetDeviceStatus(); errSt == nil && len(stList) > 0 {
+			var items []TuyaCloudStatusItem
+			for _, st := range stList {
+				items = append(items, TuyaCloudStatusItem{
+					Code:  fmt.Sprintf("%v", st["code"]),
+					Value: st["value"],
+				})
 			}
-		} else {
-			_, _ = dbConn.Exec("UPDATE devices SET status = true WHERE id = $1", deviceID)
+			cDev := TuyaCloudDeviceItem{Status: items}
+			_, pWatt, _, _, _ := parseCloudDeviceTelemetry(cDev)
+			pInt := int(math.Round(pWatt))
+			if pInt > 0 {
+				_, _ = dbConn.Exec("UPDATE devices SET power = $1 WHERE id = $2", pInt, deviceID)
+			}
 		}
+
+		// Tuya hardware smart plug memerlukan jeda 2-4 detik untuk sensor arus/daya mulai melaporkan Watt
+		go func(dID string) {
+			time.Sleep(3 * time.Second)
+			retryClient := tuya.NewCloudClient(dID, tuyaAccessID, tuyaAccessKey, tuyaEndpoint)
+			retryClient.InvalidateDeviceCache()
+			if stList, errSt := retryClient.GetDeviceStatus(); errSt == nil && len(stList) > 0 {
+				var items []TuyaCloudStatusItem
+				for _, st := range stList {
+					items = append(items, TuyaCloudStatusItem{
+						Code:  fmt.Sprintf("%v", st["code"]),
+						Value: st["value"],
+					})
+				}
+				cDev := TuyaCloudDeviceItem{Status: items}
+				sStat, pWatt, _, _, _ := parseCloudDeviceTelemetry(cDev)
+				pInt := int(math.Round(pWatt))
+				if sStat {
+					if pInt > 0 {
+						_, _ = dbConn.Exec("UPDATE devices SET status = true, power = $1 WHERE id = $2", pInt, dID)
+					} else {
+						_, _ = dbConn.Exec("UPDATE devices SET status = true WHERE id = $1", dID)
+					}
+					broadcastAnalytics(dbConn, wsHub)
+				}
+			}
+		}(deviceID)
 	}
 	broadcastAnalytics(dbConn, wsHub)
 	return nil
