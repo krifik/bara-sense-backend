@@ -24,8 +24,9 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: 22
           script: |
+            bash << 'EOF'
             mask() {
-              local v=$1
+              local v="$1"
               local l=${#v}
               if [ -z "$v" ]; then echo "(kosong)"; elif [ $l -le 4 ]; then echo "***"; else echo "${v:0:3}...${v: -3}"; fi
             }
@@ -47,4 +48,5 @@ jobs:
             echo "PORT=${{ secrets.PORT }}" >> /opt/bara-sense/.env
             cp /opt/bara-sense/.env /opt/bara-sense/backend/.env
             echo "Berhasil mengupdate .env di /opt/bara-sense/.env dan /opt/bara-sense/backend/.env"
+            EOF
             /usr/bin/bash /opt/deploy-backend.sh
