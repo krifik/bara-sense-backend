@@ -28,6 +28,7 @@ jobs:
             echo "TUYA_ACCESS_ID=${{ secrets.TUYA_ACCESS_ID }}" > /opt/bara-sense/.env
             echo "TUYA_ACCESS_KEY=${{ secrets.TUYA_ACCESS_KEY }}" >> /opt/bara-sense/.env
             echo "TUYA_ENDPOINT=${{ secrets.TUYA_ENDPOINT }}" >> /opt/bara-sense/.env
+            echo "TUYA_UID=${{ secrets.TUYA_UID }}" >> /opt/bara-sense/.env
             echo "POSTGRES_URL=${{ secrets.POSTGRES_URL }}" >> /opt/bara-sense/.env
             echo "PORT=${{ secrets.PORT }}" >> /opt/bara-sense/.env
             cp /opt/bara-sense/.env /opt/bara-sense/backend/.env

@@ -35,6 +35,8 @@ func main() {
 	if endpoint == "" {
 		endpoint = "https://openapi.tuyaus.com"
 	}
+	// Force the endpoint to openapi.tuyaus.com for testing if iotbing is the problem
+	endpoint = "https://openapi.tuyaus.com"
 
 	connector.InitWithOptions(env.WithAccessID(accessID), env.WithAccessKey(accessKey), env.WithApiHost(endpoint), env.WithMsgHost(endpoint))
 
@@ -48,10 +50,13 @@ func main() {
 	err = connector.MakePostRequest(context.Background(), connector.WithAPIUri("/v1.0/device/paring/token"), connector.WithPayload([]byte(`{}`)), connector.WithResp(&resp2))
 	fmt.Printf("Test 2 (/v1.0/device/paring/token): Err=%v, Resp=%v\n", err, resp2)
 
-	// Test 3: /v1.0/iot-03/device-registration/token
-	var resp3 interface{}
-	payload := `{"pairing_type":"WIFI", "time_zone_id":"Asia/Jakarta", "uid": "bay17913100056154MCI"}`
-	err = connector.MakePostRequest(context.Background(), connector.WithAPIUri("/v1.0/iot-03/device-registration/token"), connector.WithPayload([]byte(payload)), connector.WithResp(&resp3))
-	fmt.Printf("Test 3 (/v1.0/iot-03/device-registration/token): Err=%v, Resp=%v\n", err, resp3)
+	// Test 3: /v1.0/iot-03/device-registration/token with various pairing types
+	pairingTypes := []string{"AP", "EZ", "BLE", "BLE_WIFI", "ZIGBEE", "ZIGBEE_SUB", "WIFI", "WIFI_BLE"}
+	for _, pt := range pairingTypes {
+		var resp3 interface{}
+		payload := fmt.Sprintf(`{"pairing_type":"%s", "time_zone_id":"Asia/Jakarta", "uid": "bay17913100056154MCI"}`, pt)
+		err = connector.MakePostRequest(context.Background(), connector.WithAPIUri("/v1.0/iot-03/device-registration/token"), connector.WithPayload([]byte(payload)), connector.WithResp(&resp3))
+		fmt.Printf("Test 3 (pairing_type: %s): Err=%v, Resp=%v\n", pt, err, resp3)
+	}
 
 }

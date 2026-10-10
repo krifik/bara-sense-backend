@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -189,14 +190,23 @@ func (c *CloudClient) CreatePairingToken(timeZone string) (interface{}, error) {
 		timeZone = "Asia/Jakarta"
 	}
 
-	payload := map[string]interface{}{}
+	uid := os.Getenv("TUYA_UID")
+	if uid == "" {
+		return nil, fmt.Errorf("TUYA_UID is not set in environment variables. You must link a Tuya App Account and provide its UID.")
+	}
+
+	payload := map[string]interface{}{
+		"time_zone_id": timeZone,
+		"pairing_type": "BLE",
+		"uid":          uid,
+	}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal pairing token payload: %v", err)
 	}
 
 	var resp interface{}
-	apiURI := "/v1.0/devices/tokens"
+	apiURI := "/v1.0/iot-03/device-registration/token"
 
 	err = connector.MakePostRequest(
 		context.Background(),
@@ -217,7 +227,7 @@ func (c *CloudClient) GetPairingTokenStatus(token string) (interface{}, error) {
 	log.Printf("Querying status of pairing token %s from Tuya Cloud...", token)
 
 	var resp interface{}
-	apiURI := fmt.Sprintf("/v1.0/devices/tokens/%s", token)
+	apiURI := fmt.Sprintf("/v1.0/iot-03/device-registration/tokens/%s", token)
 
 	err := connector.MakeGetRequest(
 		context.Background(),
