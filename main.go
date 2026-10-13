@@ -3128,8 +3128,8 @@ func main() {
 			"payload": req.Payload,
 		})
 	}
-	api.Post("/mqtt/publish", requireRole("admin", "operator"), mqttPublishHandler)
-	app.Post("/api/mqtt/publish", requireRole("admin", "operator"), mqttPublishHandler)
+	api.Post("/mqtt/publish", requireRole("admin", "operator", "viewer"), mqttPublishHandler)
+	app.Post("/api/mqtt/publish", requireRole("admin", "operator", "viewer"), mqttPublishHandler)
 
 	// 20. API: MQTT Daftar Klien Terhubung
 	mqttClientsHandler := func(c *fiber.Ctx) error {
@@ -3166,8 +3166,8 @@ func main() {
 			"message": fmt.Sprintf("Klien MQTT '%s' berhasil diputus secara manual", req.ClientID),
 		})
 	}
-	api.Post("/mqtt/disconnect", requireRole("admin", "operator"), mqttDisconnectHandler)
-	app.Post("/api/mqtt/disconnect", requireRole("admin", "operator"), mqttDisconnectHandler)
+	api.Post("/mqtt/disconnect", requireRole("admin", "operator", "viewer"), mqttDisconnectHandler)
+	app.Post("/api/mqtt/disconnect", requireRole("admin", "operator", "viewer"), mqttDisconnectHandler)
 
 	// Serve Static Frontend React Single Page App (dist directory)
 	distPaths := []string{"../frontend/dist", "./frontend/dist", "frontend/dist", "./dist"}

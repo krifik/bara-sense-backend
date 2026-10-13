@@ -61,6 +61,7 @@ type BrokerManager struct {
 	clientCount    int
 	lastActivityAt time.Time
 	connectedTimes map[string]time.Time
+	blockedClients map[string]time.Time
 }
 
 var instance *BrokerManager
@@ -79,6 +80,7 @@ func NewBrokerManager(listenAddr string, wsBroadcaster func(data []byte)) *Broke
 			latestState:    "UNKNOWN",
 			lastActivityAt: time.Now(),
 			connectedTimes: make(map[string]time.Time),
+			blockedClients: make(map[string]time.Time),
 		}
 	})
 	return instance
@@ -110,8 +112,23 @@ func (h *telemetryHook) Provides(b byte) bool {
 	}, []byte{b})
 }
 
-// OnConnectAuthenticate mengizinkan koneksi dari klien IoT tanpa auth maupun dengan auth (memperbaiki rc=5)
+// OnConnectAuthenticate mengizinkan koneksi dari klien IoT tanpa auth maupun dengan auth, dan memeriksa pemblokiran manual
 func (h *telemetryHook) OnConnectAuthenticate(cl *mqttserver.Client, pk packets.Packet) bool {
+	if cl != nil {
+		h.manager.mu.RLock()
+		blockUntil, blocked := h.manager.blockedClients[cl.ID]
+		h.manager.mu.RUnlock()
+		if blocked {
+			if time.Now().Before(blockUntil) {
+				log.Printf("[MQTT AUTH] Menolak koneksi klien '%s' (sedang diblokir secara manual hingga %s)", cl.ID, blockUntil.Format("15:04:05"))
+				return false
+			}
+			// Blokir sudah kedaluwarsa
+			h.manager.mu.Lock()
+			delete(h.manager.blockedClients, cl.ID)
+			h.manager.mu.Unlock()
+		}
+	}
 	return true
 }
 
@@ -324,10 +341,19 @@ func (m *BrokerManager) DisconnectClient(clientID string) error {
 		return fmt.Errorf("klien '%s' tidak ditemukan atau sudah terputus", clientID)
 	}
 
-	err := m.Server.DisconnectClient(cl, packets.ErrAdministrativeAction)
-	m.addLog("system/clients", fmt.Sprintf("Admin disconnected client: %s", clientID), "admin", "out")
+	// Masukkan ke daftar blocked sementara selama 30 detik agar NodeMCU tidak langsung re-connect instan
+	m.mu.Lock()
+	m.blockedClients[clientID] = time.Now().Add(30 * time.Second)
+	delete(m.connectedTimes, clientID)
+	m.mu.Unlock()
+
+	// Tutup koneksi klien (DisconnectClient mengembalikan code ErrAdministrativeAction sebagai konfirmasi penutupan)
+	_ = m.Server.DisconnectClient(cl, packets.ErrAdministrativeAction)
+	cl.Stop(packets.ErrAdministrativeAction)
+
+	m.addLog("system/clients", fmt.Sprintf("Admin disconnected client: %s (cooldown 30s)", clientID), "admin", "out")
 	m.broadcastStatus()
-	return err
+	return nil
 }
 
 // GetConnectedClients mengembalikan daftar klien yang saat ini terhubung
