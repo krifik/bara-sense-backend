@@ -3082,7 +3082,7 @@ func main() {
 	})
 
 	// 18. API: MQTT Broker Status & Telemetry
-	api.Get("/mqtt/status", func(c *fiber.Ctx) error {
+	mqttStatusHandler := func(c *fiber.Ctx) error {
 		if mqttBroker == nil {
 			return c.Status(503).JSON(fiber.Map{
 				"error": "MQTT Broker is not initialized",
@@ -3092,10 +3092,12 @@ func main() {
 			"status": "success",
 			"data":   mqttBroker.GetStatus(),
 		})
-	})
+	}
+	api.Get("/mqtt/status", mqttStatusHandler)
+	app.Get("/api/mqtt/status", mqttStatusHandler)
 
 	// 19. API: MQTT Manual Publish Endpoint (Publish pesan ke broker)
-	api.Post("/mqtt/publish", requireRole("admin", "operator"), func(c *fiber.Ctx) error {
+	mqttPublishHandler := func(c *fiber.Ctx) error {
 		if mqttBroker == nil {
 			return c.Status(503).JSON(fiber.Map{
 				"error": "MQTT Broker is not initialized",
@@ -3125,7 +3127,9 @@ func main() {
 			"topic":   req.Topic,
 			"payload": req.Payload,
 		})
-	})
+	}
+	api.Post("/mqtt/publish", requireRole("admin", "operator"), mqttPublishHandler)
+	app.Post("/api/mqtt/publish", requireRole("admin", "operator"), mqttPublishHandler)
 
 	// Serve Static Frontend React Single Page App (dist directory)
 	distPaths := []string{"../frontend/dist", "./frontend/dist", "frontend/dist", "./dist"}
