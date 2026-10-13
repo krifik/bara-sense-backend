@@ -17,6 +17,7 @@ import (
 
 	"github.com/fiqri/home-automation-backend/domain"
 	"github.com/fiqri/home-automation-backend/infrastructure/db"
+	"github.com/fiqri/home-automation-backend/infrastructure/mqtt"
 	"github.com/fiqri/home-automation-backend/infrastructure/tuya"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -1077,6 +1078,17 @@ func main() {
 	wsHub := NewWsHub()
 	go wsHub.Run()
 
+	// Inisialisasi Embedded MQTT Broker (Mochi-MQTT v2) pada Port 1883
+	mqttPort := getEnv("MQTT_PORT", "1883")
+	mqttBroker := mqtt.NewBrokerManager(":"+mqttPort, func(data []byte) {
+		wsHub.broadcast <- data
+	})
+	if err := mqttBroker.Start(); err != nil {
+		log.Printf("[MQTT ERROR] Gagal menjalankan MQTT broker: %v", err)
+	} else {
+		log.Printf("[MQTT SUCCESS] Embedded MQTT Broker aktif dan berjalan di port %s", mqttPort)
+	}
+
 	// Mulai Scheduler Worker untuk Penjadwalan Waktu & Timer Hitung Mundur
 	startSchedulerWorker(dbConn, wsHub, tuyaAccessID, tuyaAccessKey, tuyaEndpoint)
 
@@ -1212,6 +1224,17 @@ func main() {
 
 		if data, err := getAnalyticsData(dbConn, currentTariff); err == nil {
 			if b, err := json.Marshal(data); err == nil {
+				_ = c.WriteMessage(websocket.TextMessage, b)
+			}
+		}
+
+		// Kirim snapshot status MQTT broker saat client pertama kali tersambung
+		if mqttBroker != nil {
+			st := mqttBroker.GetStatus()
+			if b, err := json.Marshal(map[string]interface{}{
+				"type":   "mqtt_status",
+				"status": st,
+			}); err == nil {
 				_ = c.WriteMessage(websocket.TextMessage, b)
 			}
 		}
@@ -3055,6 +3078,52 @@ func main() {
 		return c.JSON(fiber.Map{
 			"status": "success",
 			"logs": lines,
+		})
+	})
+
+	// 18. API: MQTT Broker Status & Telemetry
+	api.Get("/mqtt/status", func(c *fiber.Ctx) error {
+		if mqttBroker == nil {
+			return c.Status(503).JSON(fiber.Map{
+				"error": "MQTT Broker is not initialized",
+			})
+		}
+		return c.JSON(fiber.Map{
+			"status": "success",
+			"data":   mqttBroker.GetStatus(),
+		})
+	})
+
+	// 19. API: MQTT Manual Publish Endpoint (Publish pesan ke broker)
+	api.Post("/mqtt/publish", requireRole("admin", "operator"), func(c *fiber.Ctx) error {
+		if mqttBroker == nil {
+			return c.Status(503).JSON(fiber.Map{
+				"error": "MQTT Broker is not initialized",
+			})
+		}
+
+		var req struct {
+			Topic   string `json:"topic"`
+			Payload string `json:"payload"`
+			Retain  bool   `json:"retain"`
+		}
+		if err := c.BodyParser(&req); err != nil || req.Topic == "" {
+			return c.Status(400).JSON(fiber.Map{
+				"error": "Topic dan Payload harus diisi secara valid",
+			})
+		}
+
+		if err := mqttBroker.Publish(req.Topic, []byte(req.Payload), req.Retain); err != nil {
+			return c.Status(500).JSON(fiber.Map{
+				"error": fmt.Sprintf("Gagal mem-publish pesan MQTT: %v", err),
+			})
+		}
+
+		return c.JSON(fiber.Map{
+			"status":  "success",
+			"message": fmt.Sprintf("Pesan berhasil di-publish ke topic %s", req.Topic),
+			"topic":   req.Topic,
+			"payload": req.Payload,
 		})
 	})
 

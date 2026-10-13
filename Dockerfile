@@ -47,8 +47,9 @@ COPY --from=backend-builder /app/backend/server /app/server
 # Copy swagger docs jika ada
 COPY --from=backend-builder /app/backend/docs /app/docs/
 
-# Expose default HTTP/WebSocket port
+# Expose default HTTP/WebSocket port & MQTT broker port
 EXPOSE 3000
+EXPOSE 1883
 
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

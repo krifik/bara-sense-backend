@@ -8,9 +8,17 @@ ssh.connect('157.15.124.192', username='root', password='Bara0113!')
 
 print("1. Uploading files...")
 sftp = ssh.open_sftp()
+try:
+    ssh.exec_command("mkdir -p /opt/bara-sense/backend/infrastructure/mqtt")
+except:
+    pass
 sftp.put(r'c:\projects\home-automation\backend\main.go', '/opt/bara-sense/backend/main.go')
 sftp.put(r'c:\projects\home-automation\backend\tuya_history.go', '/opt/bara-sense/backend/tuya_history.go')
 sftp.put(r'c:\projects\home-automation\backend\infrastructure\tuya\cloud_client.go', '/opt/bara-sense/backend/infrastructure/tuya/cloud_client.go')
+sftp.put(r'c:\projects\home-automation\backend\infrastructure\mqtt\broker.go', '/opt/bara-sense/backend/infrastructure/mqtt/broker.go')
+sftp.put(r'c:\projects\home-automation\backend\go.mod', '/opt/bara-sense/backend/go.mod')
+sftp.put(r'c:\projects\home-automation\backend\go.sum', '/opt/bara-sense/backend/go.sum')
+sftp.put(r'c:\projects\home-automation\backend\Dockerfile', '/opt/bara-sense/Dockerfile')
 sftp.put(r'c:\projects\home-automation\backend\.env', '/opt/bara-sense/.env')
 sftp.put(r'c:\projects\home-automation\backend\.env', '/opt/bara-sense/backend/.env')
 sftp.close()
@@ -23,7 +31,7 @@ for line in stdout:
 print("STDERR:", stderr.read().decode('utf-8', errors='ignore'))
 
 print("3. Replacing container...")
-stdin, stdout, stderr = ssh.exec_command("podman rm -f bara-sense-app && podman run -d --name bara-sense-app --restart always --network bara-network -p 3000:3000 --env-file /opt/bara-sense/.env -e POSTGRES_URL='postgres://postgres:postgres@bara-sense-db:5432/home_automation?sslmode=disable' localhost/bara-sense-app:latest")
+stdin, stdout, stderr = ssh.exec_command("podman rm -f bara-sense-app && podman run -d --name bara-sense-app --restart always --network bara-network -p 3000:3000 -p 1883:1883 --env-file /opt/bara-sense/.env -e POSTGRES_URL='postgres://postgres:postgres@bara-sense-db:5432/home_automation?sslmode=disable' localhost/bara-sense-app:latest")
 print("Run stdout:", stdout.read().decode())
 print("Run stderr:", stderr.read().decode())
 
