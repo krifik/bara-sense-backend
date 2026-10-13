@@ -116,12 +116,38 @@ func NewPostgresDB(connStr string) (*sql.DB, error) {
 		device_id TEXT PRIMARY KEY,
 		name TEXT
 	);
+
+	CREATE TABLE IF NOT EXISTS water_automation_config (
+		id INTEGER PRIMARY KEY DEFAULT 1,
+		is_enabled BOOLEAN DEFAULT true,
+		device_id TEXT DEFAULT 'a37cb5dfb4d22c266f7wxo',
+		mode TEXT DEFAULT 'percentage',
+		turn_on_pct DOUBLE PRECISION DEFAULT 25.0,
+		turn_off_pct DOUBLE PRECISION DEFAULT 90.0,
+		turn_on_depth_cm DOUBLE PRECISION DEFAULT 30.0,
+		turn_off_depth_cm DOUBLE PRECISION DEFAULT 100.0,
+		safety_timeout_min INTEGER DEFAULT 60,
+		cooldown_sec INTEGER DEFAULT 15,
+		last_action TEXT DEFAULT 'IDLE',
+		last_triggered_at TIMESTAMP WITH TIME ZONE
+	);
 	`
 
 	_, err = db.Exec(createTablesQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed creating PostgreSQL tables: %w", err)
 	}
+
+	// Seed default water automation config jika belum ada
+	_, _ = db.Exec(`
+		INSERT INTO water_automation_config (
+			id, is_enabled, device_id, mode, turn_on_pct, turn_off_pct, 
+			turn_on_depth_cm, turn_off_depth_cm, safety_timeout_min, cooldown_sec, last_action
+		) VALUES (
+			1, true, 'a37cb5dfb4d22c266f7wxo', 'percentage', 25.0, 90.0, 
+			30.0, 100.0, 60, 15, 'IDLE'
+		) ON CONFLICT (id) DO NOTHING;
+	`)
 
 	// Seed RBAC users if empty
 	var userCount int

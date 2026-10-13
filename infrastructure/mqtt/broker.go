@@ -53,15 +53,16 @@ type BrokerManager struct {
 	listenAddr    string
 	wsBroadcaster func(data []byte)
 
-	mu             sync.RWMutex
-	latestWater    *WaterTelemetry
-	latestState    string
-	recentLogs     []LogEntry
-	logCounter     int64
-	clientCount    int
-	lastActivityAt time.Time
-	connectedTimes map[string]time.Time
-	blockedClients map[string]time.Time
+	mu                  sync.RWMutex
+	latestWater         *WaterTelemetry
+	latestState         string
+	recentLogs          []LogEntry
+	logCounter          int64
+	clientCount         int
+	lastActivityAt      time.Time
+	connectedTimes      map[string]time.Time
+	blockedClients      map[string]time.Time
+	onWaterTelemetry    func(telem *WaterTelemetry)
 }
 
 var instance *BrokerManager
@@ -84,6 +85,13 @@ func NewBrokerManager(listenAddr string, wsBroadcaster func(data []byte)) *Broke
 		}
 	})
 	return instance
+}
+
+// SetWaterTelemetryListener mendaftarkan listener saat telemetri air baru diterima
+func (m *BrokerManager) SetWaterTelemetryListener(fn func(telem *WaterTelemetry)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onWaterTelemetry = fn
 }
 
 // GetBrokerManager mengembalikan instance singleton BrokerManager
@@ -213,6 +221,14 @@ func (h *telemetryHook) OnPublish(cl *mqttserver.Client, pk packets.Packet) (pac
 				"topic":     topic,
 				"telemetry": telem,
 			})
+
+			// Panggil Automation Rule Engine jika listener terdaftar
+			h.manager.mu.RLock()
+			listener := h.manager.onWaterTelemetry
+			h.manager.mu.RUnlock()
+			if listener != nil {
+				go listener(&telem)
+			}
 		}
 	} else if topic == "home/water/state" {
 		stateClean := strings.TrimSpace(payloadStr)

@@ -1032,6 +1032,173 @@ func startPowerGuardWorker(dbConn *sql.DB, wsHub *WsHub, tuyaAccessID, tuyaAcces
 		}
 	}()
 }
+
+// =========================================================================
+// OTOMASI PINTAR PERANGKAT AIR (TANDON / POMPA AIR BERDASARKAN LEVEL AIR)
+// =========================================================================
+type WaterAutomationConfig struct {
+	ID               int       `json:"id"`
+	IsEnabled        bool      `json:"is_enabled"`
+	DeviceID         string    `json:"device_id"`
+	DeviceName       string    `json:"device_name,omitempty"`
+	DeviceStatus     bool      `json:"device_status"`
+	Mode             string    `json:"mode"` // "percentage" atau "depth"
+	TurnOnPct        float64   `json:"turn_on_pct"`
+	TurnOffPct       float64   `json:"turn_off_pct"`
+	TurnOnDepthCm    float64   `json:"turn_on_depth_cm"`
+	TurnOffDepthCm   float64   `json:"turn_off_depth_cm"`
+	SafetyTimeoutMin int       `json:"safety_timeout_min"`
+	CooldownSec      int       `json:"cooldown_sec"`
+	LastAction       string    `json:"last_action"`
+	LastTriggeredAt  *string   `json:"last_triggered_at,omitempty"`
+}
+
+var (
+	waterAutoMu        sync.Mutex
+	lastWaterActionAt  time.Time
+	waterTurnOnTime    time.Time
+)
+
+func evaluateWaterAutomation(dbConn *sql.DB, wsHub *WsHub, tuyaAccessID, tuyaAccessKey, tuyaEndpoint string, mqttBroker *mqtt.BrokerManager, telem *mqtt.WaterTelemetry) {
+	if telem == nil || !telem.Valid {
+		return
+	}
+
+	waterAutoMu.Lock()
+	defer waterAutoMu.Unlock()
+
+	var cfg WaterAutomationConfig
+	var lastTriggered sql.NullTime
+	err := dbConn.QueryRow(`
+		SELECT id, is_enabled, device_id, mode, turn_on_pct, turn_off_pct, 
+		       turn_on_depth_cm, turn_off_depth_cm, safety_timeout_min, cooldown_sec, 
+		       last_action, last_triggered_at
+		FROM water_automation_config WHERE id = 1
+	`).Scan(
+		&cfg.ID, &cfg.IsEnabled, &cfg.DeviceID, &cfg.Mode, &cfg.TurnOnPct, &cfg.TurnOffPct,
+		&cfg.TurnOnDepthCm, &cfg.TurnOffDepthCm, &cfg.SafetyTimeoutMin, &cfg.CooldownSec,
+		&cfg.LastAction, &lastTriggered,
+	)
+	if err != nil || !cfg.IsEnabled || cfg.DeviceID == "" {
+		return
+	}
+
+	// Cek status saklar perangkat pompa di database
+	var devStatus bool
+	var devName string
+	errDev := dbConn.QueryRow("SELECT status, name FROM devices WHERE id = $1", cfg.DeviceID).Scan(&devStatus, &devName)
+	if errDev != nil {
+		devName = "Pompa Air"
+	}
+
+	now := time.Now()
+	cooldownDuration := time.Duration(cfg.CooldownSec) * time.Second
+	if cooldownDuration < 5*time.Second {
+		cooldownDuration = 10 * time.Second
+	}
+
+	// 1. SAFETY OVERFLOW GUARD: Jika tandon mencapai overflow (>98% atau status OVERFLOW)
+	if (telem.Percentage >= 98.0 || telem.State == "OVERFLOW") && devStatus {
+		if now.Sub(lastWaterActionAt) >= cooldownDuration {
+			log.Printf("[WATER AUTO GUARD] ⚠️ OVERFLOW TERDETEKSI (%.1f%%)! Mematikan saklar %s segera.", telem.Percentage, devName)
+			_ = executeDeviceToggle(dbConn, wsHub, tuyaAccessID, tuyaAccessKey, tuyaEndpoint, cfg.DeviceID, false)
+			lastWaterActionAt = now
+			_, _ = dbConn.Exec("UPDATE water_automation_config SET last_action = 'STOP_OVERFLOW', last_triggered_at = CURRENT_TIMESTAMP WHERE id = 1")
+			
+			// Publish MQTT command STOP ke pompa
+			if mqttBroker != nil {
+				_ = mqttBroker.Publish("home/water/pump/control", []byte(`{"command":"STOP","reason":"OVERFLOW"}`), false)
+			}
+			sendTelegramNotification(dbConn, fmt.Sprintf("⚠️ *[WATER GUARD]* Tandon Terdeteksi Penuh/Overflow (%.1f%%). Saklar '%s' telah dimatikan otomatis!", telem.Percentage, devName))
+		}
+		return
+	}
+
+	// 2. SAFETY TIMEOUT GUARD: Jika pompa sudah menyala melebihi batas waktu maksimal (mencegah pompa jebol/luber)
+	if devStatus && cfg.SafetyTimeoutMin > 0 && !waterTurnOnTime.IsZero() {
+		maxDuration := time.Duration(cfg.SafetyTimeoutMin) * time.Minute
+		if now.Sub(waterTurnOnTime) > maxDuration {
+			log.Printf("[WATER AUTO GUARD] ⏱️ Batas waktu nyala aman (%d menit) terlampaui! Mematikan %s.", cfg.SafetyTimeoutMin, devName)
+			_ = executeDeviceToggle(dbConn, wsHub, tuyaAccessID, tuyaAccessKey, tuyaEndpoint, cfg.DeviceID, false)
+			lastWaterActionAt = now
+			waterTurnOnTime = time.Time{}
+			_, _ = dbConn.Exec("UPDATE water_automation_config SET last_action = 'STOP_TIMEOUT', last_triggered_at = CURRENT_TIMESTAMP WHERE id = 1")
+			if mqttBroker != nil {
+				_ = mqttBroker.Publish("home/water/pump/control", []byte(`{"command":"STOP","reason":"TIMEOUT"}`), false)
+			}
+			sendTelegramNotification(dbConn, fmt.Sprintf("⏱️ *[WATER GUARD]* Pompa '%s' telah menyala melebihi batas waktu aman (%d menit). Saklar dimatikan otomatis untuk keselamatan sistem.", devName, cfg.SafetyTimeoutMin))
+			return
+		}
+	}
+
+	// Cooldown filter untuk mencegah relay on/off terlalu cepat karena riak air
+	if now.Sub(lastWaterActionAt) < cooldownDuration {
+		return
+	}
+
+	// 3. Evaluasi Logika Otomatisasi (Berdasarkan Mode Persentase atau Kedalaman Air)
+	shouldTurnOn := false
+	shouldTurnOff := false
+	triggerReason := ""
+
+	if cfg.Mode == "depth" {
+		// Mode Kedalaman Air (cm)
+		if telem.WaterDepthCm <= cfg.TurnOnDepthCm && !devStatus {
+			shouldTurnOn = true
+			triggerReason = fmt.Sprintf("Kedalaman air (%.1f cm) <= batas minimum (%.1f cm)", telem.WaterDepthCm, cfg.TurnOnDepthCm)
+		} else if telem.WaterDepthCm >= cfg.TurnOffDepthCm && devStatus {
+			shouldTurnOff = true
+			triggerReason = fmt.Sprintf("Kedalaman air (%.1f cm) >= batas maksimum (%.1f cm)", telem.WaterDepthCm, cfg.TurnOffDepthCm)
+		}
+	} else {
+		// Mode Persentase Kapasitas Tandon (%)
+		if telem.Percentage <= cfg.TurnOnPct && !devStatus {
+			shouldTurnOn = true
+			triggerReason = fmt.Sprintf("Kapasitas tandon (%.1f%%) <= batas minimum (%.1f%%)", telem.Percentage, cfg.TurnOnPct)
+		} else if telem.Percentage >= cfg.TurnOffPct && devStatus {
+			shouldTurnOff = true
+			triggerReason = fmt.Sprintf("Kapasitas tandon (%.1f%%) >= batas maksimum (%.1f%%)", telem.Percentage, cfg.TurnOffPct)
+		}
+	}
+
+	// Eksekusi Menyalakan Perangkat Pompa Air
+	if shouldTurnOn {
+		log.Printf("[WATER AUTO] 💧 Mengaktifkan %s: %s", devName, triggerReason)
+		errToggle := executeDeviceToggle(dbConn, wsHub, tuyaAccessID, tuyaAccessKey, tuyaEndpoint, cfg.DeviceID, true)
+		if errToggle == nil {
+			lastWaterActionAt = now
+			waterTurnOnTime = now
+			_, _ = dbConn.Exec("UPDATE water_automation_config SET last_action = 'START_AUTO', last_triggered_at = CURRENT_TIMESTAMP WHERE id = 1")
+			if mqttBroker != nil {
+				_ = mqttBroker.Publish("home/water/pump/control", []byte(`{"command":"START","reason":"AUTO_LEVEL"}`), false)
+			}
+			sendTelegramNotification(dbConn, fmt.Sprintf("💧 *[OTOMASI AIR BARA-Sense]*\nLevel air tandon berkurang (%s).\nSaklar '%s' *NYALA OTOMATIS* mengisi tandon.", triggerReason, devName))
+		}
+	} else if shouldTurnOff {
+		log.Printf("[WATER AUTO] 🛑 Mematikan %s: %s", devName, triggerReason)
+		errToggle := executeDeviceToggle(dbConn, wsHub, tuyaAccessID, tuyaAccessKey, tuyaEndpoint, cfg.DeviceID, false)
+		if errToggle == nil {
+			lastWaterActionAt = now
+			waterTurnOnTime = time.Time{}
+			_, _ = dbConn.Exec("UPDATE water_automation_config SET last_action = 'STOP_AUTO', last_triggered_at = CURRENT_TIMESTAMP WHERE id = 1")
+			if mqttBroker != nil {
+				_ = mqttBroker.Publish("home/water/pump/control", []byte(`{"command":"STOP","reason":"AUTO_LEVEL"}`), false)
+			}
+			sendTelegramNotification(dbConn, fmt.Sprintf("🛑 *[OTOMASI AIR BARA-Sense]*\nLevel air tandon sudah penuh (%s).\nSaklar '%s' *MATI OTOMATIS*.", triggerReason, devName))
+		}
+	}
+}
+
+func startWaterAutomationWorker(dbConn *sql.DB, wsHub *WsHub, tuyaAccessID, tuyaAccessKey, tuyaEndpoint string, mqttBroker *mqtt.BrokerManager) {
+	if mqttBroker == nil {
+		return
+	}
+	mqttBroker.SetWaterTelemetryListener(func(telem *mqtt.WaterTelemetry) {
+		evaluateWaterAutomation(dbConn, wsHub, tuyaAccessID, tuyaAccessKey, tuyaEndpoint, mqttBroker, telem)
+	})
+	log.Println("[WATER AUTO] Automation Worker terpasang aktif menyimak telemetri tandon air.")
+}
+
 var globalLogPath string
 
 func main() {
@@ -1094,6 +1261,9 @@ func main() {
 
 	// Mulai Proteksi Anti-Jeglek PLN (Smart Load Shedding & Ceiling Guard)
 	startPowerGuardWorker(dbConn, wsHub, tuyaAccessID, tuyaAccessKey, tuyaEndpoint)
+
+	// Mulai Otomasi Pompa & Level Air Tandon Pintar
+	startWaterAutomationWorker(dbConn, wsHub, tuyaAccessID, tuyaAccessKey, tuyaEndpoint, mqttBroker)
 
 	// Background telemetry syncer & WebSocket broadcaster
 	go func() {
@@ -3168,6 +3338,107 @@ func main() {
 	}
 	api.Post("/mqtt/disconnect", requireRole("admin", "operator", "viewer"), mqttDisconnectHandler)
 	app.Post("/api/mqtt/disconnect", requireRole("admin", "operator", "viewer"), mqttDisconnectHandler)
+
+	// 22. API: Get & Update Water Automation Configuration
+	waterAutomationGetHandler := func(c *fiber.Ctx) error {
+		var cfg WaterAutomationConfig
+		var lastTriggered sql.NullTime
+		err := dbConn.QueryRow(`
+			SELECT id, is_enabled, device_id, mode, turn_on_pct, turn_off_pct, 
+			       turn_on_depth_cm, turn_off_depth_cm, safety_timeout_min, cooldown_sec, 
+			       last_action, last_triggered_at
+			FROM water_automation_config WHERE id = 1
+		`).Scan(
+			&cfg.ID, &cfg.IsEnabled, &cfg.DeviceID, &cfg.Mode, &cfg.TurnOnPct, &cfg.TurnOffPct,
+			&cfg.TurnOnDepthCm, &cfg.TurnOffDepthCm, &cfg.SafetyTimeoutMin, &cfg.CooldownSec,
+			&cfg.LastAction, &lastTriggered,
+		)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": fmt.Sprintf("Gagal memuat konfigurasi otomasi air: %v", err)})
+		}
+
+		if lastTriggered.Valid {
+			str := lastTriggered.Time.Format("02 Jan 2006 15:04:05")
+			cfg.LastTriggeredAt = &str
+		}
+
+		// Cari nama dan status saklar perangkat
+		if cfg.DeviceID != "" {
+			_ = dbConn.QueryRow("SELECT name, status FROM devices WHERE id = $1", cfg.DeviceID).Scan(&cfg.DeviceName, &cfg.DeviceStatus)
+		}
+
+		return c.JSON(fiber.Map{
+			"status": "success",
+			"data":   cfg,
+		})
+	}
+	api.Get("/water-automation", waterAutomationGetHandler)
+	app.Get("/api/water-automation", waterAutomationGetHandler)
+
+	waterAutomationUpdateHandler := func(c *fiber.Ctx) error {
+		var req struct {
+			IsEnabled        bool    `json:"is_enabled"`
+			DeviceID         string  `json:"device_id"`
+			Mode             string  `json:"mode"`
+			TurnOnPct        float64 `json:"turn_on_pct"`
+			TurnOffPct       float64 `json:"turn_off_pct"`
+			TurnOnDepthCm    float64 `json:"turn_on_depth_cm"`
+			TurnOffDepthCm   float64 `json:"turn_off_depth_cm"`
+			SafetyTimeoutMin int     `json:"safety_timeout_min"`
+			CooldownSec      int     `json:"cooldown_sec"`
+		}
+
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "Payload JSON tidak valid"})
+		}
+
+		if req.Mode != "depth" {
+			req.Mode = "percentage"
+		}
+		if req.TurnOnPct < 0 {
+			req.TurnOnPct = 0
+		}
+		if req.TurnOffPct > 100 {
+			req.TurnOffPct = 100
+		}
+		if req.TurnOnPct >= req.TurnOffPct {
+			return c.Status(400).JSON(fiber.Map{"error": "Batas Nyala Otomatis harus lebih rendah dari Batas Mati Otomatis"})
+		}
+		if req.SafetyTimeoutMin <= 0 {
+			req.SafetyTimeoutMin = 60
+		}
+		if req.CooldownSec < 5 {
+			req.CooldownSec = 15
+		}
+
+		_, err := dbConn.Exec(`
+			UPDATE water_automation_config SET
+				is_enabled = $1,
+				device_id = $2,
+				mode = $3,
+				turn_on_pct = $4,
+				turn_off_pct = $5,
+				turn_on_depth_cm = $6,
+				turn_off_depth_cm = $7,
+				safety_timeout_min = $8,
+				cooldown_sec = $9
+			WHERE id = 1
+		`, req.IsEnabled, req.DeviceID, req.Mode, req.TurnOnPct, req.TurnOffPct,
+			req.TurnOnDepthCm, req.TurnOffDepthCm, req.SafetyTimeoutMin, req.CooldownSec)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": fmt.Sprintf("Gagal menyimpan konfigurasi: %v", err)})
+		}
+
+		log.Printf("[WATER AUTO CONFIG] Konfigurasi otomasi air diperbarui (Enabled: %v, Mode: %s, Device: %s, Nyala: %.1f%%/%.1fcm, Mati: %.1f%%/%.1fcm)",
+			req.IsEnabled, req.Mode, req.DeviceID, req.TurnOnPct, req.TurnOnDepthCm, req.TurnOffPct, req.TurnOffDepthCm)
+
+		return c.JSON(fiber.Map{
+			"status":  "success",
+			"message": "Konfigurasi otomasi tandon air berhasil disimpan",
+		})
+	}
+	api.Put("/water-automation", requireRole("admin", "operator"), waterAutomationUpdateHandler)
+	app.Put("/api/water-automation", requireRole("admin", "operator"), waterAutomationUpdateHandler)
 
 	// Serve Static Frontend React Single Page App (dist directory)
 	distPaths := []string{"../frontend/dist", "./frontend/dist", "frontend/dist", "./dist"}
