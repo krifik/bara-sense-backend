@@ -3131,6 +3131,44 @@ func main() {
 	api.Post("/mqtt/publish", requireRole("admin", "operator"), mqttPublishHandler)
 	app.Post("/api/mqtt/publish", requireRole("admin", "operator"), mqttPublishHandler)
 
+	// 20. API: MQTT Daftar Klien Terhubung
+	mqttClientsHandler := func(c *fiber.Ctx) error {
+		if mqttBroker == nil {
+			return c.Status(503).JSON(fiber.Map{"error": "MQTT Broker is not initialized"})
+		}
+		return c.JSON(fiber.Map{
+			"status": "success",
+			"data":   mqttBroker.GetConnectedClients(),
+		})
+	}
+	api.Get("/mqtt/clients", mqttClientsHandler)
+	app.Get("/api/mqtt/clients", mqttClientsHandler)
+
+	// 21. API: MQTT Disconnect Klien Secara Manual
+	mqttDisconnectHandler := func(c *fiber.Ctx) error {
+		if mqttBroker == nil {
+			return c.Status(503).JSON(fiber.Map{"error": "MQTT Broker is not initialized"})
+		}
+
+		var req struct {
+			ClientID string `json:"client_id"`
+		}
+		if err := c.BodyParser(&req); err != nil || req.ClientID == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "Parameter client_id wajib disertakan"})
+		}
+
+		if err := mqttBroker.DisconnectClient(req.ClientID); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		return c.JSON(fiber.Map{
+			"status":  "success",
+			"message": fmt.Sprintf("Klien MQTT '%s' berhasil diputus secara manual", req.ClientID),
+		})
+	}
+	api.Post("/mqtt/disconnect", requireRole("admin", "operator"), mqttDisconnectHandler)
+	app.Post("/api/mqtt/disconnect", requireRole("admin", "operator"), mqttDisconnectHandler)
+
 	// Serve Static Frontend React Single Page App (dist directory)
 	distPaths := []string{"../frontend/dist", "./frontend/dist", "frontend/dist", "./dist"}
 	var foundDist string
