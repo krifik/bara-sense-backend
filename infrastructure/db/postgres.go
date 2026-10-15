@@ -126,6 +126,10 @@ func NewPostgresDB(connStr string) (*sql.DB, error) {
 		turn_off_pct DOUBLE PRECISION DEFAULT 90.0,
 		turn_on_depth_cm DOUBLE PRECISION DEFAULT 30.0,
 		turn_off_depth_cm DOUBLE PRECISION DEFAULT 100.0,
+		tank_total_depth_cm DOUBLE PRECISION DEFAULT 100.0,
+		tank_sensor_offset_min_cm DOUBLE PRECISION DEFAULT 20.0,
+		tank_threshold_low_pct DOUBLE PRECISION DEFAULT 25.0,
+		tank_threshold_high_pct DOUBLE PRECISION DEFAULT 90.0,
 		safety_timeout_min INTEGER DEFAULT 60,
 		cooldown_sec INTEGER DEFAULT 15,
 		last_action TEXT DEFAULT 'IDLE',
@@ -138,14 +142,26 @@ func NewPostgresDB(connStr string) (*sql.DB, error) {
 		return nil, fmt.Errorf("failed creating PostgreSQL tables: %w", err)
 	}
 
+	// Migrasi kolom baru untuk konfigurasi geometri tangki air jika tabel sudah ada sebelumnya
+	_, _ = db.Exec(`
+		ALTER TABLE water_automation_config ADD COLUMN IF NOT EXISTS tank_total_depth_cm DOUBLE PRECISION DEFAULT 100.0;
+		ALTER TABLE water_automation_config ADD COLUMN IF NOT EXISTS tank_sensor_offset_min_cm DOUBLE PRECISION DEFAULT 20.0;
+		ALTER TABLE water_automation_config ADD COLUMN IF NOT EXISTS tank_threshold_low_pct DOUBLE PRECISION DEFAULT 25.0;
+		ALTER TABLE water_automation_config ADD COLUMN IF NOT EXISTS tank_threshold_high_pct DOUBLE PRECISION DEFAULT 90.0;
+	`)
+
 	// Seed default water automation config jika belum ada
 	_, _ = db.Exec(`
 		INSERT INTO water_automation_config (
 			id, is_enabled, device_id, mode, turn_on_pct, turn_off_pct, 
-			turn_on_depth_cm, turn_off_depth_cm, safety_timeout_min, cooldown_sec, last_action
+			turn_on_depth_cm, turn_off_depth_cm,
+			tank_total_depth_cm, tank_sensor_offset_min_cm, tank_threshold_low_pct, tank_threshold_high_pct,
+			safety_timeout_min, cooldown_sec, last_action
 		) VALUES (
 			1, true, 'a37cb5dfb4d22c266f7wxo', 'percentage', 25.0, 90.0, 
-			30.0, 100.0, 60, 15, 'IDLE'
+			30.0, 100.0,
+			100.0, 20.0, 25.0, 90.0,
+			60, 15, 'IDLE'
 		) ON CONFLICT (id) DO NOTHING;
 	`)
 

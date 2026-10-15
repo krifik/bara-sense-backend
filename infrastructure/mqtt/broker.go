@@ -47,22 +47,31 @@ type LogEntry struct {
 	Direction string `json:"direction"` // "in" atau "out"
 }
 
+// TankGeometry menyimpan konfigurasi fisik tangki tandon air untuk kalkulasi telemetri
+type TankGeometry struct {
+	TotalDepthCm      float64 `json:"total_depth_cm"`
+	SensorOffsetMinCm float64 `json:"sensor_offset_min_cm"`
+	ThresholdLowPct   float64 `json:"threshold_low_pct"`
+	ThresholdHighPct  float64 `json:"threshold_high_pct"`
+}
+
 // BrokerManager mengelola embedded MQTT broker, hooks, state telemetry, dan integrasi websocket
 type BrokerManager struct {
 	Server        *mqttserver.Server
 	listenAddr    string
 	wsBroadcaster func(data []byte)
 
-	mu                  sync.RWMutex
-	latestWater         *WaterTelemetry
-	latestState         string
-	recentLogs          []LogEntry
-	logCounter          int64
-	clientCount         int
-	lastActivityAt      time.Time
-	connectedTimes      map[string]time.Time
-	blockedClients      map[string]time.Time
-	onWaterTelemetry    func(telem *WaterTelemetry)
+	mu               sync.RWMutex
+	latestWater      *WaterTelemetry
+	latestState      string
+	recentLogs       []LogEntry
+	logCounter       int64
+	clientCount      int
+	lastActivityAt   time.Time
+	connectedTimes   map[string]time.Time
+	blockedClients   map[string]time.Time
+	onWaterTelemetry func(telem *WaterTelemetry)
+	tankGeometry     TankGeometry
 }
 
 var instance *BrokerManager
@@ -82,9 +91,31 @@ func NewBrokerManager(listenAddr string, wsBroadcaster func(data []byte)) *Broke
 			lastActivityAt: time.Now(),
 			connectedTimes: make(map[string]time.Time),
 			blockedClients: make(map[string]time.Time),
+			tankGeometry: TankGeometry{
+				TotalDepthCm:      100.0,
+				SensorOffsetMinCm: 20.0,
+				ThresholdLowPct:   25.0,
+				ThresholdHighPct:  90.0,
+			},
 		}
 	})
 	return instance
+}
+
+// SetTankGeometry memperbarui parameter geometri tangki untuk kalkulasi kedalaman & kapasitas air
+func (m *BrokerManager) SetTankGeometry(geo TankGeometry) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if geo.TotalDepthCm > 0 {
+		m.tankGeometry = geo
+	}
+}
+
+// GetTankGeometry mengambil konfigurasi geometri tangki aktif
+func (m *BrokerManager) GetTankGeometry() TankGeometry {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.tankGeometry
 }
 
 // SetWaterTelemetryListener mendaftarkan listener saat telemetri air baru diterima
@@ -208,6 +239,46 @@ func (h *telemetryHook) OnPublish(cl *mqttserver.Client, pk packets.Packet) (pac
 		var telem WaterTelemetry
 		if err := json.Unmarshal(pk.Payload, &telem); err == nil {
 			telem.Timestamp = time.Now().Format(time.RFC3339)
+
+			// Kalkulasi dinamis berbasis konfigurasi geometri tangki aktif dari database
+			h.manager.mu.RLock()
+			geo := h.manager.tankGeometry
+			h.manager.mu.RUnlock()
+
+			if telem.Valid && telem.RawDistanceCm > 0 && geo.TotalDepthCm > 0 {
+				effectiveMax := geo.TotalDepthCm + geo.SensorOffsetMinCm
+				depth := effectiveMax - telem.RawDistanceCm
+				if depth < 0 {
+					depth = 0
+				}
+				if depth > geo.TotalDepthCm {
+					depth = geo.TotalDepthCm
+				}
+				pct := (depth / geo.TotalDepthCm) * 100.0
+				if pct < 0 {
+					pct = 0
+				}
+				if pct > 100 {
+					pct = 100
+				}
+
+				telem.WaterDepthCm = depth
+				telem.Percentage = pct
+
+				// Evaluasi state mesin telemetri
+				if telem.RawDistanceCm < geo.SensorOffsetMinCm && pct >= 98.0 {
+					telem.State = "OVERFLOW"
+				} else if pct >= geo.ThresholdHighPct {
+					telem.State = "FULL"
+				} else if pct <= geo.ThresholdLowPct {
+					telem.State = "LOW_LEVEL"
+				} else if pct <= 5.0 {
+					telem.State = "EMPTY"
+				} else {
+					telem.State = "NORMAL"
+				}
+			}
+
 			h.manager.mu.Lock()
 			h.manager.latestWater = &telem
 			if telem.State != "" {

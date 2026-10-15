@@ -1037,20 +1037,24 @@ func startPowerGuardWorker(dbConn *sql.DB, wsHub *WsHub, tuyaAccessID, tuyaAcces
 // OTOMASI PINTAR PERANGKAT AIR (TANDON / POMPA AIR BERDASARKAN LEVEL AIR)
 // =========================================================================
 type WaterAutomationConfig struct {
-	ID               int       `json:"id"`
-	IsEnabled        bool      `json:"is_enabled"`
-	DeviceID         string    `json:"device_id"`
-	DeviceName       string    `json:"device_name,omitempty"`
-	DeviceStatus     bool      `json:"device_status"`
-	Mode             string    `json:"mode"` // "percentage" atau "depth"
-	TurnOnPct        float64   `json:"turn_on_pct"`
-	TurnOffPct       float64   `json:"turn_off_pct"`
-	TurnOnDepthCm    float64   `json:"turn_on_depth_cm"`
-	TurnOffDepthCm   float64   `json:"turn_off_depth_cm"`
-	SafetyTimeoutMin int       `json:"safety_timeout_min"`
-	CooldownSec      int       `json:"cooldown_sec"`
-	LastAction       string    `json:"last_action"`
-	LastTriggeredAt  *string   `json:"last_triggered_at,omitempty"`
+	ID                    int       `json:"id"`
+	IsEnabled             bool      `json:"is_enabled"`
+	DeviceID              string    `json:"device_id"`
+	DeviceName            string    `json:"device_name,omitempty"`
+	DeviceStatus          bool      `json:"device_status"`
+	Mode                  string    `json:"mode"` // "percentage" atau "depth"
+	TurnOnPct             float64   `json:"turn_on_pct"`
+	TurnOffPct            float64   `json:"turn_off_pct"`
+	TurnOnDepthCm         float64   `json:"turn_on_depth_cm"`
+	TurnOffDepthCm        float64   `json:"turn_off_depth_cm"`
+	TankTotalDepthCm      float64   `json:"tank_total_depth_cm"`
+	TankSensorOffsetMinCm float64   `json:"tank_sensor_offset_min_cm"`
+	TankThresholdLowPct   float64   `json:"tank_threshold_low_pct"`
+	TankThresholdHighPct  float64   `json:"tank_threshold_high_pct"`
+	SafetyTimeoutMin      int       `json:"safety_timeout_min"`
+	CooldownSec           int       `json:"cooldown_sec"`
+	LastAction            string    `json:"last_action"`
+	LastTriggeredAt       *string   `json:"last_triggered_at,omitempty"`
 }
 
 var (
@@ -1071,12 +1075,19 @@ func evaluateWaterAutomation(dbConn *sql.DB, wsHub *WsHub, tuyaAccessID, tuyaAcc
 	var lastTriggered sql.NullTime
 	err := dbConn.QueryRow(`
 		SELECT id, is_enabled, device_id, mode, turn_on_pct, turn_off_pct, 
-		       turn_on_depth_cm, turn_off_depth_cm, safety_timeout_min, cooldown_sec, 
+		       turn_on_depth_cm, turn_off_depth_cm,
+		       COALESCE(tank_total_depth_cm, 100.0),
+		       COALESCE(tank_sensor_offset_min_cm, 20.0),
+		       COALESCE(tank_threshold_low_pct, 25.0),
+		       COALESCE(tank_threshold_high_pct, 90.0),
+		       safety_timeout_min, cooldown_sec, 
 		       last_action, last_triggered_at
 		FROM water_automation_config WHERE id = 1
 	`).Scan(
 		&cfg.ID, &cfg.IsEnabled, &cfg.DeviceID, &cfg.Mode, &cfg.TurnOnPct, &cfg.TurnOffPct,
-		&cfg.TurnOnDepthCm, &cfg.TurnOffDepthCm, &cfg.SafetyTimeoutMin, &cfg.CooldownSec,
+		&cfg.TurnOnDepthCm, &cfg.TurnOffDepthCm,
+		&cfg.TankTotalDepthCm, &cfg.TankSensorOffsetMinCm, &cfg.TankThresholdLowPct, &cfg.TankThresholdHighPct,
+		&cfg.SafetyTimeoutMin, &cfg.CooldownSec,
 		&cfg.LastAction, &lastTriggered,
 	)
 	if err != nil || !cfg.IsEnabled || cfg.DeviceID == "" {
@@ -1193,6 +1204,24 @@ func startWaterAutomationWorker(dbConn *sql.DB, wsHub *WsHub, tuyaAccessID, tuya
 	if mqttBroker == nil {
 		return
 	}
+
+	// Sinkronkan geometri tangki tandon air awal dari database ke broker manager
+	if dbConn != nil {
+		var geo mqtt.TankGeometry
+		err := dbConn.QueryRow(`
+			SELECT COALESCE(tank_total_depth_cm, 100.0),
+			       COALESCE(tank_sensor_offset_min_cm, 20.0),
+			       COALESCE(tank_threshold_low_pct, 25.0),
+			       COALESCE(tank_threshold_high_pct, 90.0)
+			FROM water_automation_config WHERE id = 1
+		`).Scan(&geo.TotalDepthCm, &geo.SensorOffsetMinCm, &geo.ThresholdLowPct, &geo.ThresholdHighPct)
+		if err == nil && geo.TotalDepthCm > 0 {
+			mqttBroker.SetTankGeometry(geo)
+			log.Printf("[WATER AUTO] Geometri tangki terpasang: Kedalaman=%.1f cm, Offset=%.1f cm, Low=%.1f%%, High=%.1f%%",
+				geo.TotalDepthCm, geo.SensorOffsetMinCm, geo.ThresholdLowPct, geo.ThresholdHighPct)
+		}
+	}
+
 	mqttBroker.SetWaterTelemetryListener(func(telem *mqtt.WaterTelemetry) {
 		evaluateWaterAutomation(dbConn, wsHub, tuyaAccessID, tuyaAccessKey, tuyaEndpoint, mqttBroker, telem)
 	})
@@ -3345,12 +3374,19 @@ func main() {
 		var lastTriggered sql.NullTime
 		err := dbConn.QueryRow(`
 			SELECT id, is_enabled, device_id, mode, turn_on_pct, turn_off_pct, 
-			       turn_on_depth_cm, turn_off_depth_cm, safety_timeout_min, cooldown_sec, 
+			       turn_on_depth_cm, turn_off_depth_cm,
+			       COALESCE(tank_total_depth_cm, 100.0),
+			       COALESCE(tank_sensor_offset_min_cm, 20.0),
+			       COALESCE(tank_threshold_low_pct, 25.0),
+			       COALESCE(tank_threshold_high_pct, 90.0),
+			       safety_timeout_min, cooldown_sec, 
 			       last_action, last_triggered_at
 			FROM water_automation_config WHERE id = 1
 		`).Scan(
 			&cfg.ID, &cfg.IsEnabled, &cfg.DeviceID, &cfg.Mode, &cfg.TurnOnPct, &cfg.TurnOffPct,
-			&cfg.TurnOnDepthCm, &cfg.TurnOffDepthCm, &cfg.SafetyTimeoutMin, &cfg.CooldownSec,
+			&cfg.TurnOnDepthCm, &cfg.TurnOffDepthCm,
+			&cfg.TankTotalDepthCm, &cfg.TankSensorOffsetMinCm, &cfg.TankThresholdLowPct, &cfg.TankThresholdHighPct,
+			&cfg.SafetyTimeoutMin, &cfg.CooldownSec,
 			&cfg.LastAction, &lastTriggered,
 		)
 		if err != nil {
@@ -3377,15 +3413,19 @@ func main() {
 
 	waterAutomationUpdateHandler := func(c *fiber.Ctx) error {
 		var req struct {
-			IsEnabled        bool    `json:"is_enabled"`
-			DeviceID         string  `json:"device_id"`
-			Mode             string  `json:"mode"`
-			TurnOnPct        float64 `json:"turn_on_pct"`
-			TurnOffPct       float64 `json:"turn_off_pct"`
-			TurnOnDepthCm    float64 `json:"turn_on_depth_cm"`
-			TurnOffDepthCm   float64 `json:"turn_off_depth_cm"`
-			SafetyTimeoutMin int     `json:"safety_timeout_min"`
-			CooldownSec      int     `json:"cooldown_sec"`
+			IsEnabled             bool    `json:"is_enabled"`
+			DeviceID              string  `json:"device_id"`
+			Mode                  string  `json:"mode"`
+			TurnOnPct             float64 `json:"turn_on_pct"`
+			TurnOffPct            float64 `json:"turn_off_pct"`
+			TurnOnDepthCm         float64 `json:"turn_on_depth_cm"`
+			TurnOffDepthCm        float64 `json:"turn_off_depth_cm"`
+			TankTotalDepthCm      float64 `json:"tank_total_depth_cm"`
+			TankSensorOffsetMinCm float64 `json:"tank_sensor_offset_min_cm"`
+			TankThresholdLowPct   float64 `json:"tank_threshold_low_pct"`
+			TankThresholdHighPct  float64 `json:"tank_threshold_high_pct"`
+			SafetyTimeoutMin      int     `json:"safety_timeout_min"`
+			CooldownSec           int     `json:"cooldown_sec"`
 		}
 
 		if err := c.BodyParser(&req); err != nil {
@@ -3395,6 +3435,22 @@ func main() {
 		if req.Mode != "depth" {
 			req.Mode = "percentage"
 		}
+		if req.TankTotalDepthCm <= 0 {
+			req.TankTotalDepthCm = 100.0
+		}
+		if req.TankSensorOffsetMinCm < 0 {
+			req.TankSensorOffsetMinCm = 20.0
+		}
+		if req.TankThresholdLowPct <= 0 {
+			req.TankThresholdLowPct = 25.0
+		}
+		if req.TankThresholdHighPct > 100 || req.TankThresholdHighPct <= 0 {
+			req.TankThresholdHighPct = 90.0
+		}
+		if req.TankThresholdLowPct >= req.TankThresholdHighPct {
+			return c.Status(400).JSON(fiber.Map{"error": "Ambang batas rendah tangki (Low) harus lebih kecil dari ambang batas penuh (High)"})
+		}
+
 		if req.TurnOnPct < 0 {
 			req.TurnOnPct = 0
 		}
@@ -3420,21 +3476,37 @@ func main() {
 				turn_off_pct = $5,
 				turn_on_depth_cm = $6,
 				turn_off_depth_cm = $7,
-				safety_timeout_min = $8,
-				cooldown_sec = $9
+				tank_total_depth_cm = $8,
+				tank_sensor_offset_min_cm = $9,
+				tank_threshold_low_pct = $10,
+				tank_threshold_high_pct = $11,
+				safety_timeout_min = $12,
+				cooldown_sec = $13
 			WHERE id = 1
 		`, req.IsEnabled, req.DeviceID, req.Mode, req.TurnOnPct, req.TurnOffPct,
-			req.TurnOnDepthCm, req.TurnOffDepthCm, req.SafetyTimeoutMin, req.CooldownSec)
+			req.TurnOnDepthCm, req.TurnOffDepthCm,
+			req.TankTotalDepthCm, req.TankSensorOffsetMinCm, req.TankThresholdLowPct, req.TankThresholdHighPct,
+			req.SafetyTimeoutMin, req.CooldownSec)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": fmt.Sprintf("Gagal menyimpan konfigurasi: %v", err)})
 		}
 
-		log.Printf("[WATER AUTO CONFIG] Konfigurasi otomasi air diperbarui (Enabled: %v, Mode: %s, Device: %s, Nyala: %.1f%%/%.1fcm, Mati: %.1f%%/%.1fcm)",
-			req.IsEnabled, req.Mode, req.DeviceID, req.TurnOnPct, req.TurnOnDepthCm, req.TurnOffPct, req.TurnOffDepthCm)
+		// Update runtime MQTT Broker geometry cache agar kalkulasi telemetri segera presisi
+		if mqttBroker != nil {
+			mqttBroker.SetTankGeometry(mqtt.TankGeometry{
+				TotalDepthCm:      req.TankTotalDepthCm,
+				SensorOffsetMinCm: req.TankSensorOffsetMinCm,
+				ThresholdLowPct:   req.TankThresholdLowPct,
+				ThresholdHighPct:  req.TankThresholdHighPct,
+			})
+		}
+
+		log.Printf("[WATER AUTO CONFIG] Konfigurasi tangki & otomasi air diperbarui (Depth: %.1fcm, Offset: %.1fcm, Low: %.1f%%, High: %.1f%%, Mode: %s)",
+			req.TankTotalDepthCm, req.TankSensorOffsetMinCm, req.TankThresholdLowPct, req.TankThresholdHighPct, req.Mode)
 
 		return c.JSON(fiber.Map{
 			"status":  "success",
-			"message": "Konfigurasi otomasi tandon air berhasil disimpan",
+			"message": "Konfigurasi geometri tangki & otomasi air berhasil disimpan",
 		})
 	}
 	api.Put("/water-automation", requireRole("admin", "operator"), waterAutomationUpdateHandler)
